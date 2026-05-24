@@ -1,5 +1,26 @@
 import { NextResponse, type NextRequest } from 'next/server';
 
+// Content Security Policy — added once pages exist (the API-only surface
+// doesn't render HTML and doesn't need CSP).
+// 'unsafe-inline' is required for Next.js inline scripts and Tailwind; a
+// nonce-based CSP would be stricter but needs per-request nonce threading.
+const CSP = [
+  "default-src 'self'",
+  "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
+  "style-src 'self' 'unsafe-inline'",
+  "img-src 'self' data: blob: https://res.cloudinary.com",
+  "font-src 'self'",
+  "connect-src 'self' https://*.sentry.io https://sentry.io",
+  "frame-ancestors 'none'",
+  "base-uri 'self'",
+  "form-action 'self'",
+].join('; ');
+
+function addSecurityHeaders(res: NextResponse): NextResponse {
+  res.headers.set('Content-Security-Policy', CSP);
+  return res;
+}
+
 // Silent-refresh gate for protected pages.
 //
 // The (15-min) access cookie can expire while a (7-day) refresh cookie is
@@ -31,13 +52,27 @@ function isAuthedPath(pathname: string): boolean {
   return AUTHED_PREFIXES.some((p) => pathname === p || pathname.startsWith(`${p}/`));
 }
 
+const SHORT_REDIRECTS: Record<string, string> = {
+  '/login': '/auth/login',
+  '/signup': '/auth/signup',
+  '/register': '/auth/signup',
+  '/forgot-password': '/auth/forgot-password',
+};
+
 export function middleware(req: NextRequest): NextResponse {
-  if (AUTHED_PREFIXES.length === 0) return NextResponse.next();
-
   const { pathname, search } = req.nextUrl;
-  if (!isAuthedPath(pathname)) return NextResponse.next();
 
-  if (req.cookies.get(ACCESS_COOKIE)?.value) return NextResponse.next();
+  if (SHORT_REDIRECTS[pathname]) {
+    const url = req.nextUrl.clone();
+    url.pathname = SHORT_REDIRECTS[pathname];
+    url.search = search;
+    return addSecurityHeaders(NextResponse.redirect(url, 301));
+  }
+
+  if (AUTHED_PREFIXES.length === 0) return addSecurityHeaders(NextResponse.next());
+  if (!isAuthedPath(pathname)) return addSecurityHeaders(NextResponse.next());
+
+  if (req.cookies.get(ACCESS_COOKIE)?.value) return addSecurityHeaders(NextResponse.next());
 
   const target = pathname + search;
 
@@ -45,13 +80,13 @@ export function middleware(req: NextRequest): NextResponse {
     const url = req.nextUrl.clone();
     url.pathname = LOGIN_PATH;
     url.search = `?next=${encodeURIComponent(target)}`;
-    return NextResponse.redirect(url, 303);
+    return addSecurityHeaders(NextResponse.redirect(url, 303));
   }
 
   const url = req.nextUrl.clone();
   url.pathname = '/api/auth/refresh-and-return';
   url.search = `?next=${encodeURIComponent(target)}`;
-  return NextResponse.redirect(url, 303);
+  return addSecurityHeaders(NextResponse.redirect(url, 303));
 }
 
 export const config = {
