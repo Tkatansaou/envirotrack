@@ -1,193 +1,136 @@
-// Default welcome page for the izi kit starter.
-//
-// Replace this file with your real homepage as soon as you're oriented.
-// This file exists so a fresh fork shows something useful at `/` instead of a
-// blank page — it's a server component that reads env at request time and
-// shows which optional providers are configured.
-//
-// Design-swappable: uses minimal Tailwind utilities; rip the JSX out and write
-// your own homepage. The starter ships no UI components by design.
+'use client';
 
-export const runtime = 'nodejs';
+import Link from 'next/link';
+import { useRouter } from 'next/navigation';
+import { useEffect } from 'react';
+import { Leaf, ArrowRight, CheckCircle2 } from 'lucide-react';
+import { useAuth } from '@/contexts/AuthContext';
 
-function ConfigRow({ label, ok, hint }: { label: string; ok: boolean; hint: string }) {
-  return (
-    <li className="flex flex-wrap items-center gap-2 py-1.5">
-      <span aria-hidden className={ok ? 'text-emerald-600' : 'text-amber-500'}>
-        {ok ? '✅' : '⚠️ '}
-      </span>
-      <span className="font-mono text-sm">{label}</span>
-      <span className="text-xs text-gray-500">— {hint}</span>
-    </li>
-  );
-}
+const TRUST_BADGES = ['Conforme Décret 2017-040/PR', 'Normes ANGE Togo', 'Tmoney & Flooz acceptés'];
 
-export default function Home() {
-  const env = process.env;
+const FEATURES = [
+  { icon: '📋', label: 'Checklist réglementaire' },
+  { icon: '📝', label: 'Rédaction EIES guidée' },
+  { icon: '📊', label: 'Suivi PGES trimestriel' },
+  { icon: '📄', label: 'Export PDF aux normes' },
+];
 
-  const required = [
-    { label: 'DATABASE_URL', ok: !!env.DATABASE_URL, hint: 'Postgres (required)' },
-    { label: 'JWT_SECRET', ok: !!env.JWT_SECRET, hint: 'Auth signing key (required)' },
-  ];
+export default function LandingPage() {
+  const { user, loading } = useAuth();
+  const router = useRouter();
 
-  const recommended = [
-    { label: 'ENCRYPTION_KEY', ok: !!env.ENCRYPTION_KEY, hint: 'AES-256-GCM (recommended)' },
-    { label: 'CRON_SECRET', ok: !!env.CRON_SECRET, hint: 'Vercel Cron Bearer (recommended)' },
-    { label: 'DIRECT_URL', ok: !!env.DIRECT_URL, hint: 'For prisma migrate deploy' },
-  ];
+  useEffect(() => {
+    if (!loading && user) {
+      router.replace('/dashboard');
+    }
+  }, [loading, user, router]);
 
-  const optional = [
-    {
-      label: 'UPSTASH_REDIS_REST_URL',
-      ok: !!env.UPSTASH_REDIS_REST_URL,
-      hint: 'Redis (rate limit, queue, lockout)',
-    },
-    {
-      label: 'GOOGLE_CLIENT_ID',
-      ok: !!env.GOOGLE_CLIENT_ID,
-      hint: 'Sign in with Google (OAuth)',
-    },
-    { label: 'RESEND_API_KEY', ok: !!env.RESEND_API_KEY, hint: 'Email sender' },
-    { label: 'EMAIL_FROM', ok: !!env.EMAIL_FROM, hint: 'Verified sender address' },
-    {
-      label: 'CLOUDINARY_CLOUD_NAME',
-      ok: !!env.CLOUDINARY_CLOUD_NAME,
-      hint: 'Cloudinary file / media storage',
-    },
-    { label: 'BICTORYS_API_KEY', ok: !!env.BICTORYS_API_KEY, hint: 'Mobile money payments' },
-    { label: 'SENTRY_DSN', ok: !!env.SENTRY_DSN, hint: 'Error reporting + traces' },
-  ];
+  if (loading || user) {
+    return (
+      <div className="min-h-screen bg-white flex items-center justify-center">
+        <div className="flex items-center gap-2 text-gray-400">
+          <Leaf size={16} className="text-[#123C24] animate-pulse" />
+          <span className="text-sm">Chargement…</span>
+        </div>
+      </div>
+    );
+  }
 
   return (
-    <main className="mx-auto max-w-3xl px-6 py-12 font-sans text-gray-900">
-      <header>
-        <h1 className="text-3xl font-bold tracking-tight">izi kit</h1>
-        <p className="mt-2 text-gray-600">
-          Headless Next.js 16 starter — auth, payments, admin, webhooks, cron.
-          <br />
-          You&rsquo;re seeing this default page because{' '}
-          <code className="rounded bg-gray-100 px-1.5 py-0.5 text-sm">
-            frontend/src/app/page.tsx
-          </code>{' '}
-          hasn&rsquo;t been replaced yet.
-        </p>
-      </header>
+    <div className="min-h-screen bg-white flex flex-col">
+      {/* Nav */}
+      <nav className="flex items-center justify-between px-5 sm:px-8 h-14 border-b border-gray-100">
+        <div className="flex items-center gap-2">
+          <div className="w-7 h-7 rounded-lg bg-[#123C24] flex items-center justify-center">
+            <Leaf size={13} className="text-white" />
+          </div>
+          <span className="font-bold text-[#123C24] text-base">EnviroTrack</span>
+        </div>
+        <Link
+          href="/auth/login"
+          className="text-sm text-gray-500 hover:text-gray-900 transition-colors"
+        >
+          Connexion
+        </Link>
+      </nav>
 
-      {/* ─── Beginner: what to type next ───────────────────────────────── */}
-      <section className="mt-10 rounded-lg border border-emerald-200 bg-emerald-50 p-5">
-        <h2 className="text-lg font-semibold text-emerald-900">
-          👋 New here? Open this project in Claude Code and type:
-        </h2>
-        <pre className="mt-3 overflow-x-auto rounded bg-white p-3 text-sm">/setup-kit</pre>
-        <p className="mt-3 text-sm text-emerald-900">
-          The <code>/setup-kit</code> skill audits your environment, installs what it can (pnpm via
-          Corepack, secrets), and walks you through plugging a <strong>Neon Postgres</strong>{' '}
-          connection string — the kit is tuned for Neon&rsquo;s serverless behavior (other Postgres
-          providers work but need user-side tuning). Then just{' '}
-          <strong>describe what you want to build to Claude</strong> (in French or English). The 40
-          routes (auth, payments, admin, webhooks, cron, uploads) are already wired — you only talk
-          about your product, not the plumbing. See <code>WORKFLOW.md</code> for the full
-          vibe-coding flow.
-        </p>
-      </section>
+      {/* Hero — full remaining height */}
+      <main className="flex-1 flex flex-col items-center justify-center px-5 sm:px-8 py-16 text-center">
+        {/* Badge */}
+        <div className="inline-flex items-center gap-1.5 bg-green-50 text-[#123C24] px-3 py-1 rounded-full text-xs font-semibold mb-8 border border-green-100">
+          <span className="w-1.5 h-1.5 bg-green-500 rounded-full" />
+          Plateforme EIES · Togo
+        </div>
 
-      {/* ─── Live backend probes ──────────────────────────────────────── */}
-      <section className="mt-10">
-        <h2 className="text-xl font-semibold">Backend status</h2>
-        <p className="mt-1 text-sm text-gray-600">
-          Live JSON probes — open these in a new tab to confirm everything is up.
+        {/* Title */}
+        <h1 className="text-4xl sm:text-5xl md:text-6xl font-extrabold text-gray-900 leading-[1.1] tracking-tight mb-5 max-w-2xl">
+          Vos études d&apos;impact, <span className="text-[#123C24]">sans la complexité</span>
+        </h1>
+
+        {/* Subtitle */}
+        <p className="text-base sm:text-lg text-gray-500 max-w-lg mb-10 leading-relaxed">
+          Checklist réglementaire, rédaction EIES guidée et suivi PGES en un seul outil. Conforme
+          aux normes ANGE et bailleurs internationaux.
         </p>
-        <ul className="mt-3 space-y-1">
-          <li>
-            <a
-              href="/api/health"
-              target="_blank"
-              rel="noreferrer"
-              className="text-blue-600 underline"
+
+        {/* Primary CTA */}
+        <Link
+          href="/auth/signup"
+          className="inline-flex items-center gap-2.5 bg-[#123C24] text-white px-8 py-4 rounded-xl text-base font-semibold hover:bg-[#0f2d1c] active:scale-95 transition-all shadow-lg shadow-green-900/20"
+        >
+          Commencer gratuitement
+          <ArrowRight size={18} />
+        </Link>
+
+        {/* Micro-copy */}
+        <p className="mt-4 text-xs text-gray-400">
+          Déjà inscrit ?{' '}
+          <Link href="/auth/login" className="underline underline-offset-2 hover:text-gray-700">
+            Connexion
+          </Link>
+        </p>
+
+        {/* Feature pills */}
+        <div className="mt-12 grid grid-cols-2 sm:grid-cols-4 gap-3 w-full max-w-xl">
+          {FEATURES.map((f) => (
+            <div
+              key={f.label}
+              className="flex flex-col items-center gap-2 rounded-xl bg-gray-50 px-3 py-4 border border-gray-100"
             >
-              /api/health
-            </a>{' '}
-            <span className="text-xs text-gray-500">— liveness (always responds)</span>
-          </li>
-          <li>
-            <a
-              href="/api/readyz"
-              target="_blank"
-              rel="noreferrer"
-              className="text-blue-600 underline"
-            >
-              /api/readyz
-            </a>{' '}
-            <span className="text-xs text-gray-500">
-              — readiness (DB + Redis probes, 503 if either is down)
+              <span className="text-2xl">{f.icon}</span>
+              <span className="text-xs font-medium text-gray-600 text-center leading-tight">
+                {f.label}
+              </span>
+            </div>
+          ))}
+        </div>
+
+        {/* Trust */}
+        <div className="mt-8 flex flex-wrap items-center justify-center gap-x-5 gap-y-2">
+          {TRUST_BADGES.map((b) => (
+            <span key={b} className="flex items-center gap-1.5 text-xs text-gray-400">
+              <CheckCircle2 size={12} className="text-green-500 shrink-0" />
+              {b}
             </span>
-          </li>
-        </ul>
-      </section>
-
-      {/* ─── Provider configuration ───────────────────────────────────── */}
-      <section className="mt-10">
-        <h2 className="text-xl font-semibold">Provider configuration</h2>
-        <p className="mt-1 text-sm text-gray-600">
-          Read at request time from <code>process.env</code>. Optional providers are inert when
-          absent — the corresponding routes 404 silently and the rest of the app keeps working.
-        </p>
-
-        <h3 className="mt-5 text-sm font-semibold uppercase tracking-wide text-gray-500">
-          Required (app refuses to boot without these)
-        </h3>
-        <ul>
-          {required.map((row) => (
-            <ConfigRow key={row.label} {...row} />
           ))}
-        </ul>
+        </div>
+      </main>
 
-        <h3 className="mt-5 text-sm font-semibold uppercase tracking-wide text-gray-500">
-          Recommended (app boots, but breaks at first use)
-        </h3>
-        <ul>
-          {recommended.map((row) => (
-            <ConfigRow key={row.label} {...row} />
-          ))}
-        </ul>
-
-        <h3 className="mt-5 text-sm font-semibold uppercase tracking-wide text-gray-500">
-          Optional providers
-        </h3>
-        <ul>
-          {optional.map((row) => (
-            <ConfigRow key={row.label} {...row} />
-          ))}
-        </ul>
-      </section>
-
-      {/* ─── What's shipped ───────────────────────────────────────────── */}
-      <section className="mt-10">
-        <h2 className="text-xl font-semibold">What this starter ships</h2>
-        <ul className="mt-3 list-inside list-disc space-y-1 text-sm">
-          <li>
-            API routes under <code>/api/*</code> — auth, OAuth, admin, payments, uploads, webhooks,
-            5 cron handlers
-          </li>
-          <li>Prisma schema + versioned migrations (Postgres / Neon)</li>
-          <li>Vitest unit test suite covering the protected libs</li>
-          <li>CI pipeline: format / lint / typecheck / test / build / audit</li>
-          <li>
-            Cloud-only by design — bring your own Postgres (Neon free tier), no local containers
-          </li>
-        </ul>
-        <p className="mt-3 text-sm text-gray-600">
-          Full architecture overview in{' '}
-          <code className="rounded bg-gray-100 px-1.5 py-0.5">CLAUDE.md</code>; public surface in{' '}
-          <code className="rounded bg-gray-100 px-1.5 py-0.5">README.md</code>.
-        </p>
-      </section>
-
-      <footer className="mt-12 border-t border-gray-200 pt-6 text-xs text-gray-500">
-        Replace this page in{' '}
-        <code className="rounded bg-gray-100 px-1.5 py-0.5">frontend/src/app/page.tsx</code> when
-        you&rsquo;re ready.
+      {/* Footer */}
+      <footer className="px-5 sm:px-8 py-5 border-t border-gray-100 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-gray-400">
+        <span>© 2026 EnviroTrack · Lomé, Togo</span>
+        <div className="flex items-center gap-5">
+          <Link href="/legal/cgu" className="hover:text-gray-600 transition-colors">
+            CGU
+          </Link>
+          <Link href="/auth/login" className="hover:text-gray-600 transition-colors">
+            Connexion
+          </Link>
+          <Link href="/auth/signup" className="hover:text-gray-600 transition-colors">
+            Inscription
+          </Link>
+        </div>
       </footer>
-    </main>
+    </div>
   );
 }

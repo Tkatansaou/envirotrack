@@ -1,3 +1,4 @@
+/// <reference types="node" />
 // Dev seed script. Creates 3 sample users with bcrypt-hashed passwords for
 // local development against a real Postgres. Refuses to run with
 // NODE_ENV=production to prevent accidental destructive seeding in prod.
@@ -11,6 +12,7 @@
 // mocked PrismaClient (no DB connection at module import time). The CLI
 // guard at the bottom mirrors `make-superadmin.ts:85-92`.
 
+import { fileURLToPath } from 'url';
 import { PrismaClient } from '@prisma/client';
 import bcrypt from 'bcryptjs';
 
@@ -56,6 +58,48 @@ export async function main(_args: string[] = [], deps: SeedDeps = {}): Promise<v
       console.log(`✓ ${user.email} (${user.role}, ${verified})`);
     }
     console.log('\nLogin with the password from this file (do NOT use these in prod).');
+
+    // Seed credit packs (idempotent — upsert par name)
+    const CREDIT_PACKS = [
+      { name: 'Starter', priceXOF: 25000, credits: 250, bonusPct: 0, sortOrder: 0 },
+      { name: 'Pro', priceXOF: 50000, credits: 550, bonusPct: 10, sortOrder: 1 },
+      { name: 'Business', priceXOF: 100000, credits: 1200, bonusPct: 20, sortOrder: 2 },
+      { name: 'Enterprise', priceXOF: 150000, credits: 2000, bonusPct: 33, sortOrder: 3 },
+    ];
+    for (const pack of CREDIT_PACKS) {
+      const existing = await prisma.creditPack.findFirst({ where: { name: pack.name } });
+      if (existing) {
+        await prisma.creditPack.update({ where: { id: existing.id }, data: pack });
+      } else {
+        await prisma.creditPack.create({ data: { ...pack, active: true } });
+      }
+      console.log(
+        `✓ Pack "${pack.name}" — ${pack.priceXOF.toLocaleString()} FCFA → ${pack.credits} crédits (+${pack.bonusPct}%)`,
+      );
+    }
+    // Seed demo coupons (idempotent — upsert par code)
+    const DEMO_COUPONS = [
+      { code: 'ENVIRO25K', credits: 250, description: '+250 crédits offerts (valeur 25 000 FCFA)' },
+      { code: 'ENVIRO50K', credits: 550, description: '+550 crédits offerts (valeur 50 000 FCFA)' },
+      {
+        code: 'ENVIRO100K',
+        credits: 1200,
+        description: '+1 200 crédits offerts (valeur 100 000 FCFA)',
+      },
+      {
+        code: 'ENVIRO150K',
+        credits: 2000,
+        description: '+2 000 crédits offerts (valeur 150 000 FCFA)',
+      },
+    ];
+    for (const coupon of DEMO_COUPONS) {
+      await prisma.coupon.upsert({
+        where: { code: coupon.code },
+        update: { credits: coupon.credits, description: coupon.description, active: true },
+        create: { ...coupon, maxUses: null, active: true },
+      });
+      console.log(`✓ Coupon "${coupon.code}" → ${coupon.credits} crédits`);
+    }
   } finally {
     // Only disconnect the real client; tests pass their own mock and close
     // it themselves.
@@ -67,7 +111,7 @@ export async function main(_args: string[] = [], deps: SeedDeps = {}): Promise<v
 
 // CLI entrypoint guard — only run when invoked as a script, not when
 // imported by tests.
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (fileURLToPath(import.meta.url) === process.argv[1]) {
   main()
     .then(() => process.exit(0))
     .catch((err) => {

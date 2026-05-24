@@ -8,9 +8,14 @@ coverage/
 .env
 .env.local
 .env.*.local
+# Windows reserved device name — cannot be committed
+nul
 *.tsbuildinfo
 .prisma/
 next-env.d.ts
+
+# MCP secrets — clés API dans .mcp.json ne doivent pas être committées
+.mcp.json
 
 # Claude Code — keep .claude/skills/ + settings.json shared, ignore per-machine state
 .claude/settings.local.json

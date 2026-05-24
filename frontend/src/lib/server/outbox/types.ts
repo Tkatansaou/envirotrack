@@ -13,7 +13,20 @@ export type OutboxEvent =
   | NotificationPaymentReceivedEvent
   | EmailPaymentConfirmationEvent
   | EmailVerificationCodeEvent
-  | EmailPasswordResetEvent;
+  | EmailPasswordResetEvent
+  // EnviroTrack events
+  | NotificationProjectActivatedEvent
+  | EmailProjectActivatedEvent
+  | NotificationPGESReminderEvent
+  | EmailPGESReminderEvent
+  | NotificationNonConformityOpenEvent
+  // Subscription events
+  | EmailSubscriptionStartedEvent
+  | EmailSubscriptionRenewedEvent
+  | EmailSubscriptionCancellationScheduledEvent
+  | EmailSubscriptionReactivatedEvent
+  | EmailSubscriptionPaymentFailedEvent
+  | EmailSubscriptionSuspendedEvent;
 
 export interface NotificationPaymentReceivedEvent {
   kind: 'notification.payment_received';
@@ -58,6 +71,128 @@ export interface EmailPasswordResetEvent {
     to: string;
     code: string;
     expiresAt: string;
+  };
+}
+
+// --- EnviroTrack domain events ---
+
+export interface NotificationProjectActivatedEvent {
+  kind: 'notification.project_activated';
+  payload: {
+    userId: string;
+    projectId: string;
+    projectName: string;
+  };
+}
+
+export interface EmailProjectActivatedEvent {
+  kind: 'email.project_activated';
+  payload: {
+    to: string;
+    projectId: string;
+    projectName: string;
+    projectType: string;
+  };
+}
+
+/** Emitted by the PGES quarterly reminder cron, one per project in PGES_TRACKING status */
+export interface NotificationPGESReminderEvent {
+  kind: 'notification.pges_reminder';
+  payload: {
+    userId: string;
+    projectId: string;
+    projectName: string;
+    year: number;
+    quarter: number;
+  };
+}
+
+export interface EmailPGESReminderEvent {
+  kind: 'email.pges_reminder';
+  payload: {
+    to: string;
+    projectId: string;
+    projectName: string;
+    year: number;
+    quarter: number;
+  };
+}
+
+export interface NotificationNonConformityOpenEvent {
+  kind: 'notification.non_conformity_open';
+  payload: {
+    userId: string;
+    projectId: string;
+    projectName: string;
+    nonConformityId: string;
+    gravity: string;
+  };
+}
+
+// --- Subscription events ---
+
+export interface EmailSubscriptionStartedEvent {
+  kind: 'email.subscription_started';
+  payload: {
+    to: string;
+    planName: string;
+    cycle: string;
+    creditsDeducted: number;
+    newBalance: number;
+    periodEnd: string;
+  };
+}
+
+export interface EmailSubscriptionRenewedEvent {
+  kind: 'email.subscription_renewed';
+  payload: {
+    to: string;
+    planName: string;
+    creditsDeducted: number;
+    newBalance: number;
+    nextRenewalAt: string;
+  };
+}
+
+export interface EmailSubscriptionCancellationScheduledEvent {
+  kind: 'email.subscription_cancellation_scheduled';
+  payload: {
+    to: string;
+    planName: string;
+    accessUntil: string;
+  };
+}
+
+export interface EmailSubscriptionReactivatedEvent {
+  kind: 'email.subscription_reactivated';
+  payload: {
+    to: string;
+    planName: string;
+    nextRenewalAt: string;
+  };
+}
+
+export interface EmailSubscriptionPaymentFailedEvent {
+  kind: 'email.subscription_payment_failed';
+  payload: {
+    to: string;
+    planName: string;
+    creditsNeeded: number;
+    currentBalance: number;
+    attemptsLeft: number;
+    retryAt: string | null;
+  };
+}
+
+export interface EmailSubscriptionSuspendedEvent {
+  kind: 'email.subscription_suspended';
+  payload: {
+    to: string;
+    planName: string;
+    creditsNeeded: number;
+    currentBalance: number;
+    attemptsLeft: number;
+    retryAt: string | null;
   };
 }
 

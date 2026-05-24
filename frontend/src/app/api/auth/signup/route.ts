@@ -12,6 +12,7 @@
 export const runtime = 'nodejs';
 
 import { NextResponse, type NextRequest } from 'next/server';
+import { createHash } from 'crypto';
 import { z } from 'zod';
 import { zEmail } from '@/lib/server/zod-helpers';
 import { prisma } from '@/lib/server/prisma';
@@ -24,13 +25,18 @@ import { isBanned } from '@/lib/server/auth/banned-passwords';
 import { isPwned } from '@/lib/server/auth/hibp';
 import { dummyBcryptCompare } from '@/lib/server/auth/dummy-bcrypt';
 import { enqueueOutbox } from '@/lib/server/outbox';
+import { triggerDevDrain } from '@/lib/server/dev/instant-drain';
 
 const PASSWORD_MIN = Number(process.env.AUTH_PASSWORD_MIN_LENGTH ?? 10);
 const VERIFICATION_TTL_MS = Number(process.env.AUTH_VERIFICATION_TTL_MIN ?? 15) * 60 * 1000;
 
+const VALID_ACCOUNT_TYPES = ['BUREAU', 'EXPERT', 'TERRAIN'] as const;
+
 const Body = z.object({
   email: zEmail,
   password: z.string().min(1),
+  name: z.string().min(1).max(120).optional(),
+  accountType: z.enum(VALID_ACCOUNT_TYPES).optional(),
 });
 
 const limiter = createEmailLimiter(redis ? { redis } : {}, {
@@ -59,7 +65,7 @@ export async function POST(req: NextRequest): Promise<Response> {
       res.headers.set('x-request-id', ctx.requestId);
       return res;
     }
-    const { email, password } = parsed.data;
+    const { email, password, name, accountType } = parsed.data;
 
     // 2. Password policy gates BEFORE looking up user (D-22 — keep the no-user
     //    and existing-user branches symmetric below).
@@ -96,7 +102,33 @@ export async function POST(req: NextRequest): Promise<Response> {
       return res;
     }
 
-    // 3. Per-email rate limit.
+    // 3. Pre-session CSRF token (protects against cross-site account creation).
+    //    Skipped gracefully when Redis is unavailable (dev without Redis).
+    if (redis) {
+      const signupToken = req.headers.get('x-signup-token');
+      if (!signupToken) {
+        const r = NextResponse.json(
+          { error: 'PRESESSION_TOKEN_REQUIRED', message: 'Missing signup token.' },
+          { status: 403 },
+        );
+        r.headers.set('x-request-id', ctx.requestId);
+        return r;
+      }
+      const hash = createHash('sha256').update(signupToken).digest('hex');
+      const key = `presession:signup:${hash}`;
+      const valid = await redis.get(key);
+      if (!valid) {
+        const r = NextResponse.json(
+          { error: 'PRESESSION_TOKEN_INVALID', message: 'Invalid or expired signup token.' },
+          { status: 403 },
+        );
+        r.headers.set('x-request-id', ctx.requestId);
+        return r;
+      }
+      await redis.del(key);
+    }
+
+    // 4. Per-email rate limit.
     const rateFail = await limiter.check(req, email);
     if (rateFail) return rateFail;
 
@@ -120,7 +152,7 @@ export async function POST(req: NextRequest): Promise<Response> {
 
     await prisma.$transaction(async (tx) => {
       const user = await tx.user.create({
-        data: { email, passwordHash },
+        data: { email, passwordHash, name: name ?? null, accountType: accountType ?? null },
         select: { id: true },
       });
       await tx.verificationCode.create({
@@ -141,6 +173,7 @@ export async function POST(req: NextRequest): Promise<Response> {
       });
     });
 
+    triggerDevDrain();
     log.info('signup new user');
     const res = NextResponse.json({ ok: true }, { status: 201 });
     res.headers.set('x-request-id', ctx.requestId);

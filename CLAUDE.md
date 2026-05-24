@@ -6,9 +6,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this project is
 
-**A v1-shipped, headless Next.js 16 monolith starter.** Single full-stack app (App Router API Route Handlers + Server Actions + Prisma 5 + Neon + Upstash + Cloudinary + Resend + Bictorys + Sentry). There is no separate Express backend anymore — server logic lives under `frontend/src/app/api/*` and `frontend/src/lib/server/*`. The app **ships only logic** — no UI components — so each fork designs its own UX.
+**EnviroTrack** — plateforme SaaS de conformité environnementale (EIES / PGES) pour le Togo, construite sur un monolithe Next.js 16 App Router + Prisma 5 + Neon + Upstash + Cloudinary + Resend + Bictorys + Sentry. Aucun backend Express séparé — toute la logique serveur est sous `frontend/src/app/api/*` et `frontend/src/lib/server/*`. L'application inclut les pages UI complètes (admin back-office, app utilisateur, auth) et les routes API correspondantes.
 
-Origin: bootstrapped from `amadou-template` (the legacy monorepo predecessor) on 2026-05-07; the port to a single Next.js 16 app shipped through 7 phases (auth → OAuth/notifs → admin → uploads/withdrawals → webhooks/cron → docs/tests → final pass). 555/555 unit tests green (the storage swap dropped the now-obsolete `/api/files/[...key]` proxy tests).
+Origin: bootstrapped from `amadou-template` (the legacy monorepo predecessor) on 2026-05-07; the port to a single Next.js 16 app shipped through 7 phases (auth → OAuth/notifs → admin → uploads/withdrawals → webhooks/cron → docs/tests → final pass). 555/555 unit tests green (the storage swap dropped the now-obsolete `/api/files/[...key]` proxy tests). Deployment hardening added post-v1 : Dockerfile multi-stage, CSP via middleware, `vercel-build` script, 6 versioned migrations baselined.
 
 **For an AI agent picking up this repo:** the architecture sections below describe what's already been built. Anything not listed under "Files Claude must NOT modify" is fair game to extend, refactor, or replace per your fork's needs — that's the point of a starter. The protected list is the small set of files where the invariants are subtle (refresh-token races, HMAC integrity, advisory locks…); everything else is the fork's surface area.
 
@@ -73,7 +73,11 @@ Integration tests are deferred (no formal harness in v1) — `pnpm smoke:auth` p
 
 **Multi-tenancy is opt-in.** [frontend/src/lib/server/middleware/require-org-role.ts](frontend/src/lib/server/middleware/require-org-role.ts) ships role types + rank helpers (`OWNER` > `ADMIN` > `MEMBER`). Default project surface stays user-owned (`Order.userId`, `Withdrawal.userId`). Apps that need orgs add `organizationId String?` on their domain models case by case and gate routes via `requireOrgRole('ADMIN', 'orgId')` from the middleware HOFs. Owner promotion is transactional (3 ops in a single tx). Non-members get **404, not 403**, to avoid leaking org existence.
 
-**Admin back-office** — [frontend/src/lib/server/admin/audit.ts](frontend/src/lib/server/admin/audit.ts) + [frontend/src/lib/server/middleware/require-admin.ts](frontend/src/lib/server/middleware/require-admin.ts). App-wide role on `User` (`USER` < `ADMIN` < `SUPERADMIN`). Phase-5 endpoints under `/api/admin/*` cover users (search/detail/role-change), orders (filter), withdrawals (filter + manual cancel), audit-log (paginated/filterable), and `/me` (admin probe). Every mutation calls `logAdminAction(prisma, {...})` → `AdminAction` row so we can answer "who did what when" during incidents. Bootstrap the first SUPERADMIN with `pnpm db:make-superadmin <email>` (the script lives at [frontend/scripts/make-superadmin.ts](frontend/scripts/make-superadmin.ts)).
+**Admin back-office** — [frontend/src/lib/server/admin/audit.ts](frontend/src/lib/server/admin/audit.ts) + [frontend/src/lib/server/middleware/require-admin.ts](frontend/src/lib/server/middleware/require-admin.ts). App-wide role on `User` (`USER` < `ADMIN` < `SUPERADMIN`). Endpoints under `/api/admin/*` cover users (search/detail/role-change), orders (filter), withdrawals (filter + manual cancel), audit-log (paginated/filterable), `/me` (admin probe), and **coupons** (`GET/POST /api/admin/coupons` + `PATCH /api/admin/coupons/[id]` — SUPERADMIN only). Every mutation calls `logAdminAction(prisma, { actorId: auth.admin.id, ... })` → `AdminAction` row — note `actorId`, NOT `adminId` or `auth.user.sub`. Bootstrap the first SUPERADMIN with `pnpm db:make-superadmin <email>` (the script lives at [frontend/scripts/make-superadmin.ts](frontend/scripts/make-superadmin.ts)).
+
+**Admin UI pages** live at [frontend/src/app/admin/](frontend/src/app/admin/) : `layout.tsx` (sidebar + auth guard), `page.tsx` (dashboard + KPIs), `users/`, `orders/`, `feedback/`, `audit/`, `coupons/`. The layout calls `/api/admin/me` on mount — a 401/403 redirects to `/dashboard`. Individual pages call `useApi<AdminMe>('/api/admin/me')` to get `admin.role` when they need to gate SUPERADMIN-only actions (e.g. the "Créer un coupon" button).
+
+**Coupon system** — `Coupon` model: `code` (uppercase, 3-30 chars), `discountPct Int?` (rebate %), `credits Int` (gift credits, default 0), `maxUses Int?`, `expiresAt DateTime?`, `active Boolean`. Shared validator: [frontend/src/lib/server/coupons/validate.ts](frontend/src/lib/server/coupons/validate.ts) — exports `validateAndRedeemCoupon(tx, code, userId)` which atomically checks validity, checks for duplicate redemption, and increments `usedCount`. MUST be called inside `prisma.$transaction(async tx => {...})`. Routes that use it: `POST /api/credits/coupon` (gift credits), `POST /api/credits/checkout` (discount on pack purchase), `POST /api/subscriptions` (discount on subscription).
 
 ## Files Claude must NOT modify (battle-tested)
 
@@ -102,6 +106,7 @@ If a change is genuinely required in any of these, surface a brief "I am about t
 - `frontend/src/lib/server/cron/` — extend with `verifyCronSecret(req)` consumers; add new cron route handlers under `frontend/src/app/api/cron/<name>/route.ts` mirroring the 5 existing crons; ALL cron handlers must verify `Authorization: Bearer ${CRON_SECRET}` via the shared `verifyCronSecret` helper
 - [frontend/src/lib/server/webhook/bictorys.ts](frontend/src/lib/server/webhook/bictorys.ts) — webhook provider re-export with the `kind: 'refunded'` upgrade; replace per project (Phase 5 default); the underlying `webhook/handler.ts` stays PROTECTED
 - [frontend/src/lib/server/orders/expire.ts](frontend/src/lib/server/orders/expire.ts) — `expirePendingOrders({ prisma, batchSize? })`: extend per project to add post-expiration side-effects (e.g. notify the user, write a refund job to outbox); the cron route at `app/api/cron/order-expiration/route.ts` calls this
+- [frontend/src/lib/server/coupons/validate.ts](frontend/src/lib/server/coupons/validate.ts) — `validateAndRedeemCoupon(tx, code, userId)`: the single shared coupon validator. Always call inside `prisma.$transaction(async tx => {...})`. Extend here to add new validation rules (e.g. per-plan restrictions, min-purchase thresholds).
 
 ## Critical invariants
 
@@ -117,15 +122,30 @@ If a change is genuinely required in any of these, surface a brief "I am about t
 - Frontend `api()` retries only `GET`/`HEAD` on network errors. Do not extend to `POST`/`PUT`/`PATCH`/`DELETE`.
 - Signup never sets cookies and never reveals email existence. Cookies are issued by `/verify-email` after the user enters their code.
 - Upload route enforces magic-byte validation against `UPLOAD_ALLOWED_MIME` via [frontend/src/lib/server/upload/sniff.ts](frontend/src/lib/server/upload/sniff.ts) — don't bypass by trusting `File.type` alone.
-- Admin mutations MUST go through `logAdminAction(prisma, {...})` — every back-office write is auditable. Skipping it is a compliance regression.
-- Admin role precedence: `USER` < `ADMIN` < `SUPERADMIN`. Only SUPERADMIN can change roles. The route refuses to demote the **last** SUPERADMIN to avoid locking the org out.
+- Admin mutations MUST go through `logAdminAction(prisma, {...})` — every back-office write is auditable. Skipping it is a compliance regression. The correct shape is `{ actorId: auth.admin.id, action, targetType, targetId, metadata }` — use `auth.admin.id`, **never** `auth.user.sub` (different context objects).
+- Admin role precedence: `USER` < `ADMIN` < `SUPERADMIN`. Only SUPERADMIN can change roles, create coupons, and toggle coupon active state. The route refuses to demote the **last** SUPERADMIN to avoid locking the org out.
+- `validateAndRedeemCoupon(tx, code, userId)` MUST run inside `prisma.$transaction(async tx => {...})`. Calling it outside a transaction is a TOCTOU regression — `usedCount` increment and coupon usage recording must be atomic with the side-effect (credit grant, discount application).
 - Org role precedence: `MEMBER` < `ADMIN` < `OWNER`. `requireOrgRole(min, paramName)` returns **404** to non-members (not 403) so org existence isn't leaked.
 - OAuth callback MUST refuse `email_verified !== true` from Google — otherwise an attacker with an unverified Google account matching a victim's email can take over the account via auto-linking.
 - Cron handlers MUST verify `Authorization: Bearer ${CRON_SECRET}` to prevent unauthenticated invocation of background work.
 - Cookies stay `httpOnly` + `Secure` (prod) + `SameSite=Lax`.
 - Sentry init stays in [frontend/instrumentation.ts](frontend/instrumentation.ts) `register()` — do not move it into a route module (the hook fires before app code, route imports do not).
 
-## Design system — fully swappable (no UI shipped)
+## Deployment
+
+**Vercel (recommended)** — `Root Directory = frontend`. The `vercel-build` script in [frontend/package.json](frontend/package.json) runs `prisma migrate deploy && next build` on every deploy. Requires two Neon URLs:
+- `DATABASE_URL` — pooler URL (`?pgbouncer=true&connection_limit=1`) for runtime queries
+- `DIRECT_URL` — non-pooled URL for `prisma migrate deploy` (pooler breaks DDL)
+
+Required env vars at minimum: `DATABASE_URL`, `DIRECT_URL`, `JWT_SECRET` (≥32 chars), `CRON_SECRET`, `PUBLIC_URL`, `ENCRYPTION_KEY` (32-byte base64).
+
+**Docker** — [frontend/Dockerfile](frontend/Dockerfile) is a 3-stage build (deps → builder → runner) on `node:20.18.1-alpine`. Non-root user `nextjs:nodejs`. Copies the Next.js standalone bundle + Prisma client + schema. Run with all required env vars at container start.
+
+**CSP** — applied in [frontend/middleware.ts](frontend/middleware.ts) via `addSecurityHeaders()` wrapping every `NextResponse` return. Current policy: `default-src 'self'`, images allow `res.cloudinary.com`, `connect-src` allows Sentry, `frame-ancestors 'none'`. Tighten `script-src` (remove `unsafe-eval`) once Sentry's SDK no longer needs it.
+
+**Migrations** — 6 versioned migrations under [frontend/prisma/migrations/](frontend/prisma/migrations/) are baselined and applied. Always run `pnpm db:migrate:dev` (not `db:push`) for schema changes going forward so the migration history stays clean for `migrate deploy` in CI/prod.
+
+## Design system
 
 The starter is **headless on purpose**. Touchpoints if a fork wants a specific design:
 
@@ -151,7 +171,7 @@ A beginner's golden path: `gh repo create --template` → open in Claude Code �
 Anything outside [Files Claude must NOT modify](#files-claude-must-not-modify) is the fork's surface area:
 
 - **Domain models** ([frontend/prisma/schema.prisma](frontend/prisma/schema.prisma)) — add fields, add models, add migrations. Do not rename the generic models; everything else is yours.
-- **Routes** ([frontend/src/app/api/](frontend/src/app/api/)) — add new resources. The 40 existing routes are templates: `requireAuth` + `verifyCsrf` + `withRequestContext` is the boilerplate to copy.
+- **Routes** ([frontend/src/app/api/](frontend/src/app/api/)) — add new resources. The 50+ existing routes are templates: `requireAuth` + `verifyCsrf` + `withRequestContext` is the boilerplate to copy.
 - **Page UI** ([frontend/src/app/](frontend/src/app/)) — your design, your decision (Tailwind, shadcn/ui, vanilla CSS, anything).
 - **Notifications** ([frontend/src/lib/server/notifications/templates.ts](frontend/src/lib/server/notifications/templates.ts)) — add new typed templates.
 - **Payments** ([frontend/src/lib/server/payments/](frontend/src/lib/server/payments/)) — add Stripe, Paystack, etc. behind the `PaymentProvider` interface.

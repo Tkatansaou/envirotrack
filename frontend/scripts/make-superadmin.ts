@@ -1,3 +1,4 @@
+/// <reference types="node" />
 // Bootstrap script. Promotes a user to SUPERADMIN by email.
 // Usage: pnpm db:make-superadmin <email>
 //
@@ -14,6 +15,7 @@
 // others via the admin back-office, so this script exists to bootstrap the
 // very first one.
 
+import { fileURLToPath } from 'url';
 import { PrismaClient } from '@prisma/client';
 import { logAdminAction } from '../src/lib/server/admin/audit';
 
@@ -82,7 +84,7 @@ export async function main(
 
 // CLI entrypoint guard — only run when invoked as a script, not when
 // imported by tests.
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (fileURLToPath(import.meta.url) === process.argv[1]) {
   main()
     .then((code) => process.exit(code))
     .catch((err) => {

@@ -21,7 +21,12 @@
  */
 import type { PrismaClient } from '@prisma/client';
 import { createNotification } from '../notifications/index';
-import { paymentReceived } from '../notifications/templates';
+import {
+  paymentReceived,
+  projectActivated,
+  pgesReminder,
+  nonConformityOpen,
+} from '../notifications/templates';
 import type { EmailQueue } from '../queues/email-queue';
 import { createLogger } from '../logger';
 import type { OutboxEvent } from './types';
@@ -164,6 +169,107 @@ async function dispatchEvent(deps: OutboxDispatcherDeps, event: OutboxEvent): Pr
       const { to, code, expiresAt } = event.payload;
       const tpl = resetPasswordEmail({ code, email: to, expiresAt });
       await deps.emailQueue.enqueue({ to, subject: tpl.subject, html: tpl.html });
+      return;
+    }
+    case 'notification.project_activated': {
+      const { userId, projectId, projectName } = event.payload;
+      await createNotification(deps.prisma, projectActivated(userId, projectId, projectName));
+      return;
+    }
+    case 'email.project_activated': {
+      if (!deps.emailQueue) throw new Error('email queue not configured');
+      const { to, projectId, projectName, projectType } = event.payload;
+      await deps.emailQueue.enqueue({
+        to,
+        subject: `Projet EnviroTrack activé : ${projectName}`,
+        html: `<p>Votre projet <strong>${projectName}</strong> (${projectType}, réf. ${projectId}) est maintenant actif. Vous pouvez démarrer la rédaction de votre EIES.</p>`,
+      });
+      return;
+    }
+    case 'notification.pges_reminder': {
+      const { userId, projectId, projectName, year, quarter } = event.payload;
+      await createNotification(
+        deps.prisma,
+        pgesReminder(userId, projectId, projectName, year, quarter),
+      );
+      return;
+    }
+    case 'email.pges_reminder': {
+      if (!deps.emailQueue) throw new Error('email queue not configured');
+      const { to, projectId, projectName, year, quarter } = event.payload;
+      await deps.emailQueue.enqueue({
+        to,
+        subject: `Rappel PGES T${quarter}/${year} — ${projectName}`,
+        html: `<p>Le suivi trimestriel PGES T${quarter}/${year} du projet <strong>${projectName}</strong> est en attente de saisie. <a href="${process.env['NEXT_PUBLIC_APP_URL']}/projects/${projectId}/pges">Accéder au tableau de suivi</a>.</p>`,
+      });
+      return;
+    }
+    case 'notification.non_conformity_open': {
+      const { userId, projectId, projectName, nonConformityId, gravity } = event.payload;
+      await createNotification(
+        deps.prisma,
+        nonConformityOpen(userId, projectId, projectName, nonConformityId, gravity),
+      );
+      return;
+    }
+    case 'email.subscription_started': {
+      if (!deps.emailQueue) throw new Error('email queue not configured');
+      const { to, planName, cycle, creditsDeducted, newBalance, periodEnd } = event.payload;
+      await deps.emailQueue.enqueue({
+        to,
+        subject: `Abonnement ${planName} activé`,
+        html: `<p>Votre abonnement <strong>${planName}</strong> (${cycle === 'ANNUAL' ? 'annuel' : 'mensuel'}) est actif. ${creditsDeducted} crédits débités — solde : ${newBalance} crédits. Accès jusqu'au ${new Date(periodEnd).toLocaleDateString('fr-FR')}.</p>`,
+      });
+      return;
+    }
+    case 'email.subscription_renewed': {
+      if (!deps.emailQueue) throw new Error('email queue not configured');
+      const { to, planName, creditsDeducted, newBalance, nextRenewalAt } = event.payload;
+      await deps.emailQueue.enqueue({
+        to,
+        subject: `Abonnement ${planName} renouvelé`,
+        html: `<p>Votre abonnement <strong>${planName}</strong> a été renouvelé. ${creditsDeducted} crédits débités — solde : ${newBalance} crédits. Prochain renouvellement : ${new Date(nextRenewalAt).toLocaleDateString('fr-FR')}.</p>`,
+      });
+      return;
+    }
+    case 'email.subscription_cancellation_scheduled': {
+      if (!deps.emailQueue) throw new Error('email queue not configured');
+      const { to, planName, accessUntil } = event.payload;
+      await deps.emailQueue.enqueue({
+        to,
+        subject: `Résiliation abonnement ${planName} programmée`,
+        html: `<p>Votre abonnement <strong>${planName}</strong> sera résilié à la fin de la période en cours. Vous conservez l'accès jusqu'au ${new Date(accessUntil).toLocaleDateString('fr-FR')}.</p>`,
+      });
+      return;
+    }
+    case 'email.subscription_reactivated': {
+      if (!deps.emailQueue) throw new Error('email queue not configured');
+      const { to, planName, nextRenewalAt } = event.payload;
+      await deps.emailQueue.enqueue({
+        to,
+        subject: `Abonnement ${planName} réactivé`,
+        html: `<p>La résiliation de votre abonnement <strong>${planName}</strong> a été annulée. Prochain renouvellement : ${new Date(nextRenewalAt).toLocaleDateString('fr-FR')}.</p>`,
+      });
+      return;
+    }
+    case 'email.subscription_payment_failed': {
+      if (!deps.emailQueue) throw new Error('email queue not configured');
+      const { to, planName, creditsNeeded, currentBalance, attemptsLeft } = event.payload;
+      await deps.emailQueue.enqueue({
+        to,
+        subject: `Renouvellement abonnement ${planName} échoué`,
+        html: `<p>Le renouvellement de votre abonnement <strong>${planName}</strong> a échoué (solde : ${currentBalance} crédits, requis : ${creditsNeeded} crédits). ${attemptsLeft} tentative(s) restante(s) avant suspension. Rechargez vos crédits pour maintenir l'accès.</p>`,
+      });
+      return;
+    }
+    case 'email.subscription_suspended': {
+      if (!deps.emailQueue) throw new Error('email queue not configured');
+      const { to, planName, creditsNeeded, currentBalance } = event.payload;
+      await deps.emailQueue.enqueue({
+        to,
+        subject: `Abonnement ${planName} suspendu`,
+        html: `<p>Votre abonnement <strong>${planName}</strong> a été suspendu après 3 tentatives de renouvellement échouées (solde : ${currentBalance} crédits, requis : ${creditsNeeded} crédits). Rechargez vos crédits pour réactiver l'accès.</p>`,
+      });
       return;
     }
     default: {

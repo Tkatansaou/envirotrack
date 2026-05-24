@@ -50,3 +50,54 @@ export function paymentReceived(
     dedupeKey: `payment-received:${orderId}`,
   };
 }
+
+// --- EnviroTrack notification templates ---
+
+export function projectActivated(
+  userId: string,
+  projectId: string,
+  projectName: string,
+): CreateNotificationInput {
+  return {
+    userId,
+    type: 'PROJECT_ACTIVATED',
+    title: 'Projet activé',
+    body: `Votre projet "${projectName}" est maintenant actif. Vous pouvez démarrer la rédaction de l'EIES.`,
+    data: { projectId, projectName },
+    dedupeKey: `project-activated:${projectId}`,
+  };
+}
+
+export function pgesReminder(
+  userId: string,
+  projectId: string,
+  projectName: string,
+  year: number,
+  quarter: number,
+): CreateNotificationInput {
+  return {
+    userId,
+    type: 'PGES_REMINDER',
+    title: `Rappel suivi PGES T${quarter}/${year}`,
+    body: `Le suivi trimestriel T${quarter}/${year} du projet "${projectName}" est en attente.`,
+    data: { projectId, projectName, year, quarter },
+    dedupeKey: `pges-reminder:${projectId}:${year}:${quarter}`,
+  };
+}
+
+export function nonConformityOpen(
+  userId: string,
+  projectId: string,
+  projectName: string,
+  nonConformityId: string,
+  gravity: string,
+): CreateNotificationInput {
+  return {
+    userId,
+    type: 'NON_CONFORMITY_OPEN',
+    title: 'Non-conformité détectée',
+    body: `Une non-conformité de gravité ${gravity} a été ouverte sur le projet "${projectName}".`,
+    data: { projectId, projectName, nonConformityId, gravity },
+    dedupeKey: `nc-open:${nonConformityId}`,
+  };
+}

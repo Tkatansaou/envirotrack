@@ -23,6 +23,8 @@ model User {
   name              String?
   // Optional avatar URL — populated from OAuth profile on first sign-in.
   avatarUrl         String?
+  // Onboarding type — set when user completes their profile setup.
+  accountType       String? // EXPERT | BUREAU
   // App-wide role. USER is the default; ADMIN unlocks /admin back-office;
   // SUPERADMIN can promote/demote other admins. Bootstrap an initial
   // SUPERADMIN via `pnpm db:make-superadmin <email>` (see scripts).
@@ -48,6 +50,15 @@ model User {
   // on their domain models.
   ownedOrganizations Organization[]      @relation("OrgOwner")
   memberships        OrganizationMember[] @relation("OrgMembership")
+  expertProfile      ExpertProfile?
+  projectAssignments ProjectAssignment[]
+  // Freemium — solde de crédits rechargeable via CreditOrder
+  creditBalance      Int                @default(0)
+  creditOrders       CreditOrder[]
+  creditTransactions CreditTransaction[]
+  couponRedemptions  CouponRedemption[]
+  feedbacks          Feedback[]
+  subscription       Subscription?
 
   @@index([email])
   @@index([role])
@@ -103,6 +114,10 @@ model Organization {
   members   OrganizationMember[]
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  // EnviroTrack — bureau d'études profile & projects
+  bureauProfile BureauProfile?
+  projects      Project[]
 
   @@index([ownerId])
 }
@@ -331,4 +346,532 @@ model Withdrawal {
   @@index([userId, requestedAt])
   @@index([status, requestedAt])
   @@index([provider, providerPayoutId])
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Freemium — packs de crédits rechargeable (one-shot, pas d'abonnement)
+//
+// Flux :
+//   1. L'utilisateur choisit un CreditPack + un provider (MOBILE_MONEY | CARD).
+//   2. POST /api/credits/checkout crée un CreditOrder (status PENDING) + un
+//      Order (paiement) lié, puis redirige vers la page de paiement.
+//   3. Le webhook (Moneroo / PayTech) confirme le paiement : le handler
+//      crédite `User.creditBalance` et insère une CreditTransaction CREDIT.
+//   4. Les routes métier appellent `deductCredits(userId, amount, reason)` qui
+//      insère une CreditTransaction DEBIT et décrémente atomiquement
+//      `User.creditBalance` (le helper est dans lib/server/credits/).
+// ═══════════════════════════════════════════════════════════════════════
+
+// Catalogue des packs — 4 paliers fixes (25k / 50k / 100k / 150k FCFA).
+// `credits` = crédits octroyés (avec bonus selon le palier).
+// `priceXOF` = montant facturé au client (entier FCFA, pas de décimales).
+model CreditPack {
+  id          String   @id @default(cuid())
+  name        String   // "Starter" | "Pro" | "Business" | "Enterprise"
+  priceXOF    Int      // 25000 | 50000 | 100000 | 150000
+  credits     Int      // 250 | 550 | 1200 | 2000
+  bonusPct    Int      @default(0) // 0 | 10 | 20 | 33
+  active      Boolean  @default(true)
+  sortOrder   Int      @default(0)
+  createdAt   DateTime @default(now())
+
+  orders CreditOrder[]
+
+  @@index([active])
+}
+
+// Une commande d'achat de pack.
+// `orderId` pointe vers l'Order du moteur de paiement (Bictorys / Moneroo /
+// PayTech) — c'est lui qui porte paymentUrl et status PENDING→PAID.
+// `status` ici reflète l'état de la livraison des crédits (pas le paiement).
+model CreditOrder {
+  id          String     @id @default(cuid())
+  userId      String
+  user        User       @relation(fields: [userId], references: [id], onDelete: Restrict)
+  packId      String
+  pack        CreditPack @relation(fields: [packId], references: [id], onDelete: Restrict)
+  // Lien vers l'Order du moteur de paiement (nullable le temps du checkout)
+  orderId     String?    @unique
+  // PENDING → PAID (crédits livrés) | FAILED | REFUNDED
+  status      String     @default("PENDING")
+  // Provider utilisé : "moneroo" | "paytech" | "bictorys"
+  provider    String
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+
+  transaction CreditTransaction?
+
+  @@index([userId, createdAt])
+  @@index([status])
+}
+
+// Registre comptable immuable — chaque mouvement de crédits est tracé ici.
+// `type` CREDIT (achat / bonus) ou DEBIT (consommation de feature).
+// `reason` : code stable consommé par les routes ("PROJECT_ACTIVATION",
+//   "PDF_EXPORT", "REGULATORY_SYNC", "TERRAIN_INVITE", etc.).
+model CreditTransaction {
+  id            String       @id @default(cuid())
+  userId        String
+  user          User         @relation(fields: [userId], references: [id], onDelete: Restrict)
+  // CREDIT | DEBIT
+  type          String
+  amount        Int          // toujours positif — signe porté par `type`
+  balanceBefore Int
+  balanceAfter  Int
+  reason        String       // code stable ("PACK_PURCHASE", "PROJECT_ACTIVATION", …)
+  description   String?      // texte libre lisible
+  // Lien optionnel vers la commande d'achat (présent pour CREDIT de type achat)
+  creditOrderId String?      @unique
+  creditOrder   CreditOrder? @relation(fields: [creditOrderId], references: [id], onDelete: SetNull)
+  createdAt     DateTime     @default(now())
+
+  @@index([userId, createdAt])
+  @@index([type, createdAt])
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Abonnements — renouvellement automatique par débit de crédits
+//
+// Flux :
+//   1. Client choisit un plan → POST /api/subscriptions
+//      → premier mois débité immédiatement sur creditBalance
+//      → Subscription créée (status ACTIVE, nextRenewalAt = J+30 ou J+365)
+//   2. Cron quotidien (6h) cherche les nextRenewalAt <= now()
+//      → tente de déduire `plan.creditsPerMonth` du solde
+//      → Succès : nextRenewalAt += 30j, renewalFailures = 0
+//      → Échec (solde insuffisant) : renewalFailures++, email d'alerte
+//      → 3 échecs cumulés → status SUSPENDED, email final
+//   3. Annulation : cancelAtPeriodEnd = true → accès maintenu jusqu'à
+//      currentPeriodEnd, puis status = CANCELLED
+// ═══════════════════════════════════════════════════════════════════════
+
+// Catalogue des plans d'abonnement
+model SubscriptionPlan {
+  id              String   @id @default(cuid())
+  name            String   // "Solo Expert" | "Bureau Pro" | "Bureau Premium"
+  slug            String   @unique // "solo" | "pro" | "premium"
+  description     String?
+  creditsPerMonth Int      // crédits débités / mois (ex : 150 | 350 | 750)
+  creditsPerYear  Int?     // crédits débités / an (< 12x mensuel — remise annuelle)
+  priceXOF        Int      // prix indicatif FCFA/mois (pour affichage)
+  priceAnnualXOF  Int?     // prix indicatif FCFA/an
+  maxProjects     Int?     // null = illimité
+  features        Json     @default("[]") // liste de strings affichées en UI
+  highlighted     Boolean  @default(false) // badge "Recommandé"
+  active          Boolean  @default(true)
+  sortOrder       Int      @default(0)
+  createdAt       DateTime @default(now())
+
+  subscriptions Subscription[]
+
+  @@index([active])
+}
+
+// Abonnement actif d'un utilisateur (1 seul actif par user)
+model Subscription {
+  id        String           @id @default(cuid())
+  userId    String
+  user      User             @relation(fields: [userId], references: [id], onDelete: Restrict)
+  planId    String
+  plan      SubscriptionPlan @relation(fields: [planId], references: [id], onDelete: Restrict)
+  // MONTHLY | ANNUAL
+  cycle     String           @default("MONTHLY")
+  // ACTIVE | PAST_DUE | SUSPENDED | CANCELLED
+  status    String           @default("ACTIVE")
+
+  currentPeriodStart DateTime
+  currentPeriodEnd   DateTime
+  nextRenewalAt      DateTime
+  cancelAtPeriodEnd  Boolean  @default(false)
+  cancelledAt        DateTime?
+
+  // Compteur d'échecs consécutifs de renouvellement (reset à 0 si succès)
+  renewalFailures Int      @default(0)
+  lastRenewalAt   DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId]) // un seul abonnement actif par utilisateur
+  @@index([status, nextRenewalAt])
+  @@index([userId])
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Feedback utilisateurs — observations et avis pour amélioration continue
+// ═══════════════════════════════════════════════════════════════════════
+
+// Soumission d'un avis / signalement par un utilisateur authentifié.
+// `category` : BUG | FEATURE | UX | PERFORMANCE | OTHER
+// `status`   : NEW | REVIEWED | IN_PROGRESS | DONE | WONT_FIX
+model Feedback {
+  id        String    @id @default(cuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  category  String    @default("OTHER")  // BUG | FEATURE | UX | PERFORMANCE | OTHER
+  rating    Int?      // 1–5 étoiles (optionnel)
+  title     String
+  body      String
+  page      String?   // URL ou nom de la page concernée
+  status    String    @default("NEW")    // NEW | REVIEWED | IN_PROGRESS | DONE | WONT_FIX
+  adminNote String?   // réponse / note interne de l'admin
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  @@index([status])
+  @@index([category])
+  @@index([userId])
+  @@index([createdAt])
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Coupons promotionnels — crédits offerts sur saisie d'un code
+// ═══════════════════════════════════════════════════════════════════════
+
+// Coupon créé par un SUPERADMIN (ou via seed). Code unique, usage limité.
+model Coupon {
+  id          String   @id @default(cuid())
+  code        String   @unique // ex : ENVIRO25K
+  credits     Int      @default(0) // crédits octroyés (coupon type "cadeau")
+  discountPct Int?     // % de réduction 1-100 (coupon type "rabais")
+  description String?  // texte affiché à l'utilisateur après validation
+  maxUses     Int?     // null = illimité
+  usedCount   Int      @default(0)
+  expiresAt   DateTime?
+  active      Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  redemptions CouponRedemption[]
+
+  @@index([code])
+  @@index([active])
+}
+
+// Trace d'utilisation — un coupon ne peut être utilisé qu'une fois par user.
+model CouponRedemption {
+  id        String   @id @default(cuid())
+  couponId  String
+  coupon    Coupon   @relation(fields: [couponId], references: [id], onDelete: Restrict)
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Restrict)
+  createdAt DateTime @default(now())
+
+  @@unique([couponId, userId])
+  @@index([userId])
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// EnviroTrack — Domaine métier EIES/PGES (Togo)
+// ═══════════════════════════════════════════════════════════════════════
+
+// Profil étendu du bureau d'études (1:1 avec Organization)
+model BureauProfile {
+  id             String       @id @default(cuid())
+  orgId          String       @unique
+  org            Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  agrementANGE   String? // numéro d'agrément ANGE
+  logoUrl        String? // Cloudinary public_id du logo
+  adresse        String?
+  telephone      String?
+  siteWeb        String?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+}
+
+// Profil de l'expert indépendant (1:1 avec User)
+// Contrairement au BureauProfile (via Organization), l'expert est un praticien solo
+// qui travaille sans structure juridique propre ou sans en avoir besoin sur la plateforme.
+model ExpertProfile {
+  id                String   @id @default(cuid())
+  userId            String   @unique
+  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  // Agrément personnel ANGE (optionnel — certains experts sont certifiés individuellement)
+  agrementPersonnel String?
+  // Domaines d'expertise : EAU | AIR | SOL | BIODIVERSITE | SOCIAL | SANTE | AUTRE
+  specialites       String[]
+  anneesExperience  Int?
+  bio               String?  @db.Text
+  // Contact professionnel
+  telephone         String?
+  siteWeb           String?
+  linkedinUrl       String?
+  // Pays d'activité principal (ISO 3166-1 alpha-2, défaut TG = Togo)
+  paysActivite      String   @default("TG")
+  // DISPONIBLE | EN_MISSION | INDISPONIBLE
+  disponibilite     String   @default("DISPONIBLE")
+  // Tarif journalier indicatif en XOF — null = non communiqué
+  tarifJournalier   Int?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  projects          Project[]
+
+  @@index([disponibilite])
+  @@index([paysActivite])
+}
+
+// Agent de suivi terrain assigné à un projet spécifique.
+// Permet à un bureau ou un expert d'inviter un utilisateur externe (abonné "suivi terrain")
+// sans lui donner accès à toute l'organisation ou au profil expert.
+// Rôle AGENT : saisie de relevés journaliers + consultation rapports.
+// Rôle REVIEWER : lecture seule + rapports (ex. : autorité de contrôle, bailleur).
+model ProjectAssignment {
+  id        String   @id @default(cuid())
+  projectId String
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  // AGENT | REVIEWER
+  role      String   @default("AGENT")
+  assignedBy String  // userId de celui qui a fait l'assignation
+  createdAt DateTime @default(now())
+
+  @@unique([projectId, userId])
+  @@index([userId])
+  @@index([projectId])
+}
+
+// Projet EIES/PGES
+model Project {
+  id            String         @id @default(cuid())
+  // Ownership : un projet appartient soit à un bureau d'études (orgId),
+  // soit à un expert indépendant (expertId) — jamais les deux, jamais aucun.
+  orgId         String?
+  org           Organization?  @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  expertId      String?
+  expert        ExpertProfile? @relation(fields: [expertId], references: [id], onDelete: Cascade)
+  createdBy     String // userId du créateur
+  name          String
+  // TYPE: ROUTE | BATIMENT | MINE | ENERGIE | AGRICULTURE | AUTRE
+  type          String
+  region        String
+  prefecture    String
+  canton        String?
+  maitreOuvrage String
+  // FINANCEMENT: STANDARD | BAILLEUR
+  financement   String       @default("STANDARD")
+  bailleur      String? // nom du bailleur si BAILLEUR
+  startDate     DateTime?
+  // STATUS: DRAFT | ACTIVE | EIES_SUBMITTED | PGES_TRACKING | ARCHIVED
+  status        String       @default("DRAFT")
+  orderId       String?      @unique // paiement lié (Order.id)
+  // Coordonnées GPS du projet — requis pour les données terrain Apify
+  latitude      Float?
+  longitude     Float?
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+
+  checklist       ChecklistItem[]
+  eiesSections    EIESSection[]
+  pgesMeasures    PGESMeasure[]
+  nonConformities NonConformity[]
+  fieldEntries    FieldEntry[]
+  monthlyReports  MonthlyReport[]
+  assignments     ProjectAssignment[]
+
+  @@index([orgId])
+  @@index([orgId, status])
+  @@index([expertId])
+  @@index([expertId, status])
+  @@index([createdBy])
+}
+
+// Item de checklist réglementaire (Loi 2008-005 + Décret 2017-040)
+model ChecklistItem {
+  id          String  @id @default(cuid())
+  projectId   String
+  project     Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  code        String // ex: "L2008-005-ART3"
+  article     String // ex: "Loi 2008-005, Art. 3"
+  description String
+  // CATEGORY: TDR | EIES | PGES | CONSULTATION | ADMINISTRATIF
+  category    String
+  // STATUS: PENDING | COMPLIANT | NON_COMPLIANT | NOT_APPLICABLE
+  status      String  @default("PENDING")
+  note        String?
+  sortOrder   Int     @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([projectId])
+  @@index([projectId, status])
+}
+
+// Section de l'EIES (9 sections selon Décret 2017-040/PR)
+model EIESSection {
+  id            String   @id @default(cuid())
+  projectId     String
+  project       Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  sectionNumber Int // 1-9
+  title         String
+  content       Json     @default("{}") // contenu structuré par sous-champs
+  // STATUS: EMPTY | DRAFT | COMPLETE
+  status        String   @default("EMPTY")
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@unique([projectId, sectionNumber])
+  @@index([projectId])
+}
+
+// Mesure du Plan de Gestion Environnementale et Sociale
+model PGESMeasure {
+  id          String   @id @default(cuid())
+  projectId   String
+  project     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  code        String // ex: "M-001"
+  title       String
+  description String
+  // PHASE: PREPARATION | CONSTRUCTION | EXPLOITATION | FERMETURE
+  phase       String
+  // COMPOSANTE: EAU | AIR | SOL | BIODIVERSITE | SOCIAL | SANTE | AUTRE
+  composante  String
+  sortOrder   Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  quarterlyStatuses PGESQuarterlyStatus[]
+  nonConformities   NonConformity[]
+  fieldEntries      FieldEntry[]
+
+  @@index([projectId])
+}
+
+// Statut trimestriel d'une mesure PGES
+model PGESQuarterlyStatus {
+  id          String      @id @default(cuid())
+  measureId   String
+  measure     PGESMeasure @relation(fields: [measureId], references: [id], onDelete: Cascade)
+  year        Int
+  quarter     Int // 1 | 2 | 3 | 4
+  // STATUS: RESPECTED | PARTIALLY | NOT_RESPECTED | NOT_EVALUATED
+  status      String      @default("NOT_EVALUATED")
+  comment     String?
+  evaluatedBy String? // userId
+  evaluatedAt DateTime?
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  @@unique([measureId, year, quarter])
+  @@index([measureId])
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Apify — veille réglementaire automatique
+// ═══════════════════════════════════════════════════════════════════════
+
+// Texte réglementaire scrapé (loi, décret, arrêté, guide…)
+// externalId = URL canonique du document (clé de dédup stable)
+model RegulatoryText {
+  id              String   @id @default(cuid())
+  externalId      String   @unique // URL du document (dedup key)
+  source          String   // "ange-tg" | "jo-tg" | "merf-tg" | "manual"
+  title           String
+  url             String
+  // LOI | DECRET | ARRETE | NORME | GUIDE | RAPPORT | AUTRE
+  type            String   @default("AUTRE")
+  content         String   @db.Text
+  // [] = applicable à tous les types de projets
+  applicableTypes String[]
+  scrapedAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([source])
+  @@index([type])
+  @@index([scrapedAt])
+}
+
+// Journal des runs Apify — permet de suivre les runs en cours et de
+// collecter les résultats lors du prochain tick du cron.
+model ApifySyncJob {
+  id             String    @id @default(cuid())
+  source         String
+  actorRunId     String    @unique
+  // RUNNING | SUCCEEDED | FAILED
+  status         String    @default("RUNNING")
+  itemsUpserted  Int       @default(0)
+  error          String?
+  triggeredAt    DateTime  @default(now())
+  finishedAt     DateTime?
+
+  @@index([status])
+  @@index([source, triggeredAt])
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Suivi terrain — collecte journalière → rapport mensuel → trimestriel
+// ═══════════════════════════════════════════════════════════════════════
+
+// Relevé journalier par un agent de terrain pour une mesure PGES
+model FieldEntry {
+  id          String      @id @default(cuid())
+  projectId   String
+  project     Project     @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  measureId   String
+  measure     PGESMeasure @relation(fields: [measureId], references: [id], onDelete: Cascade)
+  agentId     String // userId de l'agent terrain
+  // Date de l'observation (stockée UTC, utiliser la partie date uniquement côté client)
+  entryDate   DateTime    @db.Date
+  // CONFORME | NON_CONFORME | PARTIEL | NON_EVALUE
+  status      String      @default("NON_EVALUE")
+  observation String?
+  photos      String[]    // Cloudinary public_ids
+  latitude    Float?
+  longitude   Float?
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  @@unique([measureId, agentId, entryDate])
+  @@index([projectId, entryDate])
+  @@index([measureId])
+  @@index([agentId])
+}
+
+// Rapport mensuel de suivi terrain (consolidation des relevés journaliers)
+model MonthlyReport {
+  id          String   @id @default(cuid())
+  projectId   String
+  project     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  year        Int
+  month       Int // 1–12
+  // DRAFT | SUBMITTED | APPROVED
+  status      String   @default("DRAFT")
+  // { totalEntries, conformeCount, nonConformeCount, partielCount, coveragePercent }
+  summary     Json     @default("{}")
+  preparedBy  String // userId
+  notes       String?
+  submittedAt DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([projectId, year, month])
+  @@index([projectId])
+}
+
+// Fiche de non-conformité PGES
+model NonConformity {
+  id             String       @id @default(cuid())
+  projectId      String
+  project        Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  measureId      String?
+  measure        PGESMeasure? @relation(fields: [measureId], references: [id], onDelete: SetNull)
+  year           Int
+  quarter        Int
+  description    String
+  // GRAVITY: MINOR | MAJOR | CRITICAL
+  gravity        String       @default("MAJOR")
+  // STATUS: OPEN | IN_PROGRESS | RESOLVED | OVERDUE
+  status         String       @default("OPEN")
+  recommendation String?
+  dueDate        DateTime?
+  resolvedAt     DateTime?
+  photos         String[] // Cloudinary public_ids
+  createdBy      String // userId
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  @@index([projectId])
+  @@index([projectId, status])
+  @@index([projectId, year, quarter])
 }
