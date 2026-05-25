@@ -11,10 +11,39 @@ const inter = Inter({
 });
 
 export const metadata: Metadata = {
-  title: { default: 'EnviroTrack', template: '%s | EnviroTrack' },
+  title: { default: 'EnviroTrack — EIES & PGES au Togo', template: '%s | EnviroTrack' },
   description:
-    "Plateforme de gestion des EIES et PGES pour les bureaux d'études environnementaux au Togo. Réalisez vos études d'impact 3× plus vite.",
-  keywords: ['EIES', 'PGES', 'environnement', 'Togo', "bureau d'études", 'ANGE'],
+    "Plateforme SaaS de conformité environnementale pour le Togo. Gérez vos EIES, suivez vos PGES, soumettez vos rapports à l'ANGE — 3× plus vite.",
+  keywords: [
+    'EIES',
+    'PGES',
+    'étude impact environnemental',
+    'conformité environnementale',
+    'Togo',
+    "bureau d'études",
+    'ANGE',
+    'évaluation environnementale',
+    'suivi environnemental',
+    'rapport environnemental',
+  ],
+  metadataBase: new URL('https://envirotrack.uk'),
+  alternates: { canonical: 'https://envirotrack.uk' },
+  openGraph: {
+    type: 'website',
+    locale: 'fr_FR',
+    url: 'https://envirotrack.uk',
+    siteName: 'EnviroTrack',
+    title: 'EnviroTrack — Conformité environnementale EIES & PGES au Togo',
+    description:
+      "Plateforme SaaS de conformité environnementale pour le Togo. Gérez vos EIES, suivez vos PGES, soumettez vos rapports à l'ANGE.",
+  },
+  twitter: {
+    card: 'summary_large_image',
+    title: 'EnviroTrack — EIES & PGES au Togo',
+    description:
+      "Plateforme SaaS de conformité environnementale pour le Togo. Gérez vos EIES, suivez vos PGES, soumettez vos rapports à l'ANGE.",
+  },
+  robots: { index: true, follow: true },
 };
 
 export default function RootLayout({
