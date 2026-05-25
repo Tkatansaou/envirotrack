@@ -15,6 +15,7 @@ import {
   Leaf,
   Clock,
   Crown,
+  ShieldCheck,
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useApi } from '@/lib/useApi';
@@ -147,6 +148,25 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
               </Link>
             );
           })}
+          {isAdmin && (
+            <>
+              <div className="my-2 border-t border-gray-100" />
+              <Link
+                href="/admin"
+                className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${
+                  pathname.startsWith('/admin')
+                    ? 'bg-[#123C24]/10 text-[#123C24]'
+                    : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'
+                }`}
+              >
+                <ShieldCheck
+                  size={16}
+                  className={pathname.startsWith('/admin') ? 'text-[#123C24]' : 'text-gray-400'}
+                />
+                Administration
+              </Link>
+            </>
+          )}
         </nav>
 
         {/* User section */}
