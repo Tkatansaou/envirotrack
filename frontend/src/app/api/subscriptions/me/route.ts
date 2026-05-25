@@ -17,12 +17,31 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     const auth = await requireAuth();
     if (auth instanceof NextResponse) return auth;
 
-    const subscription = await prisma.subscription.findUnique({
-      where: { userId: auth.user.sub },
-      include: { plan: true },
-    });
+    const [subscription, userRow] = await Promise.all([
+      prisma.subscription.findUnique({
+        where: { userId: auth.user.sub },
+        include: { plan: true },
+      }),
+      prisma.user.findUnique({
+        where: { id: auth.user.sub },
+        select: { trialEndsAt: true },
+      }),
+    ]);
 
-    return NextResponse.json({ subscription }, { headers: { 'x-request-id': ctx.requestId } });
+    const now = Date.now();
+    const trialEndsAt = userRow?.trialEndsAt ?? null;
+    const trialActive = !!trialEndsAt && trialEndsAt.getTime() > now;
+    const daysLeft = trialActive
+      ? Math.ceil((trialEndsAt!.getTime() - now) / (24 * 60 * 60 * 1000))
+      : 0;
+
+    return NextResponse.json(
+      {
+        subscription,
+        trial: { active: trialActive, endsAt: trialEndsAt?.toISOString() ?? null, daysLeft },
+      },
+      { headers: { 'x-request-id': ctx.requestId } },
+    );
   });
 }
 

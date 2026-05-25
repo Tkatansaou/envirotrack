@@ -141,7 +141,11 @@ export async function POST(req: NextRequest): Promise<Response> {
         }
         await tx.user.update({
           where: { id: user.id },
-          data: { emailVerifiedAt: new Date() },
+          data: {
+            emailVerifiedAt: new Date(),
+            // Start 14-day trial on first verification only.
+            trialEndsAt: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000),
+          },
         });
       });
     } catch (err) {

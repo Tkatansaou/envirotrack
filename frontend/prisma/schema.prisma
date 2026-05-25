@@ -33,6 +33,9 @@ model User {
   // refused with 403 ACCOUNT_SUSPENDED. Mutated via /api/admin/users/[id]/status
   // (ADMIN can suspend; only SUPERADMIN can restore).
   status            String    @default("ACTIVE") // ACTIVE | SUSPENDED
+  // 14-day free trial: set once at email verification; null before verification.
+  // Gate logic: access granted while trialEndsAt > now, even without subscription.
+  trialEndsAt       DateTime?
   createdAt         DateTime  @default(now())
   updatedAt         DateTime  @updatedAt
 

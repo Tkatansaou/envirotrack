@@ -13,6 +13,8 @@ import {
   Menu,
   X,
   Leaf,
+  Clock,
+  Crown,
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useApi } from '@/lib/useApi';
@@ -20,6 +22,7 @@ import FeedbackWidget from '@/components/FeedbackWidget';
 
 interface SubCheck {
   subscription: { id: string; status: string } | null;
+  trial: { active: boolean; endsAt: string | null; daysLeft: number };
 }
 
 const NAV_ITEMS = [
@@ -49,6 +52,12 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     !!subData?.subscription &&
     ['ACTIVE', 'PAST_DUE'].includes(subData.subscription.status);
 
+  const isInTrial = subData?.trial?.active ?? false;
+  const trialDaysLeft = subData?.trial?.daysLeft ?? 0;
+
+  // Access granted if has active subscription OR is within free trial.
+  const hasAccess = hasActiveSub || isInTrial;
+
   useEffect(() => {
     if (!loading && !user) {
       router.replace('/auth/login');
@@ -58,16 +67,16 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (loading || !user) return;
     if (subLoading || subError) return;
-    if (!hasActiveSub && !isBillingPath) {
+    if (!hasAccess && !isBillingPath) {
       router.replace('/settings/billing?plans=1');
     }
-  }, [loading, user, subLoading, subError, hasActiveSub, isBillingPath, router]);
+  }, [loading, user, subLoading, subError, hasAccess, isBillingPath, router]);
 
   useEffect(() => {
     setSidebarOpen(false);
   }, [pathname]);
 
-  if (loading || !user || (subLoading && !isBillingPath)) {
+  if (loading || !user || (subLoading && !isBillingPath && !hasAccess)) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
         <div className="flex items-center gap-2 text-gray-400">
@@ -146,7 +155,15 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
             </div>
             <div className="flex-1 min-w-0">
               <p className="text-xs font-semibold text-gray-800 truncate">{user.email}</p>
-              <p className="text-[10px] text-gray-400 mt-0.5">Compte actif</p>
+              {isInTrial && !hasActiveSub ? (
+                <p className="text-[10px] text-amber-600 mt-0.5 font-medium">
+                  Essai — {trialDaysLeft}j restants
+                </p>
+              ) : hasActiveSub ? (
+                <p className="text-[10px] text-green-600 mt-0.5 font-medium">Abonné</p>
+              ) : (
+                <p className="text-[10px] text-gray-400 mt-0.5">Compte actif</p>
+              )}
             </div>
           </div>
           <button
@@ -182,6 +199,29 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
             {userInitial}
           </div>
         </header>
+
+        {/* Trial banner — shown only during trial, no active subscription */}
+        {isInTrial && !hasActiveSub && (
+          <div className="bg-amber-50 border-b border-amber-200 px-4 py-2 flex items-center justify-between gap-3 shrink-0">
+            <div className="flex items-center gap-2 text-xs text-amber-800">
+              <Clock size={13} className="shrink-0 text-amber-600" />
+              <span>
+                Essai gratuit —{' '}
+                <strong>
+                  {trialDaysLeft} jour{trialDaysLeft > 1 ? 's' : ''} restant
+                  {trialDaysLeft > 1 ? 's' : ''}
+                </strong>
+              </span>
+            </div>
+            <Link
+              href="/settings/billing?plans=1"
+              className="flex items-center gap-1 text-xs font-semibold text-amber-900 bg-amber-100 hover:bg-amber-200 px-2.5 py-1 rounded-full transition-colors shrink-0"
+            >
+              <Crown size={11} />
+              Souscrire
+            </Link>
+          </div>
+        )}
 
         <main className="flex-1 overflow-y-auto">{children}</main>
       </div>
