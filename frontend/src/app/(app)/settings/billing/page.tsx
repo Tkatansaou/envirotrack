@@ -147,6 +147,7 @@ export default function BillingPage() {
   const [couponLoading, setCouponLoading] = useState(false);
   const [couponSuccess, setCouponSuccess] = useState<string | null>(null);
   const [selectedCycle, setSelectedCycle] = useState<'MONTHLY' | 'ANNUAL'>('MONTHLY');
+  const [subCouponCode, setSubCouponCode] = useState('');
   const [subscribing, setSubscribing] = useState<string | null>(null);
   const [cancelling, setCancelling] = useState(false);
   const [showPlans, setShowPlans] = useState(false);
@@ -217,7 +218,11 @@ export default function BillingPage() {
     try {
       await api('/api/subscriptions', {
         method: 'POST',
-        body: { planId, cycle: selectedCycle },
+        body: {
+          planId,
+          cycle: selectedCycle,
+          ...(subCouponCode.trim() ? { couponCode: subCouponCode.trim().toUpperCase() } : {}),
+        },
       });
       toast('Abonnement activé avec succès !', 'success');
       invalidateCache('/api/credits/balance');
@@ -472,6 +477,27 @@ export default function BillingPage() {
                   <span className="ml-1 text-[10px] font-bold text-green-600">-17%</span>
                 </button>
               </div>
+            </div>
+
+            {/* Coupon code field */}
+            <div className="mt-3 flex items-center gap-2">
+              <Tag size={13} className="shrink-0 text-gray-400" />
+              <input
+                type="text"
+                value={subCouponCode}
+                onChange={(e) => setSubCouponCode(e.target.value.toUpperCase())}
+                placeholder="Code promo (optionnel)"
+                maxLength={30}
+                className="w-48 rounded-lg border border-gray-200 bg-gray-50 px-3 py-1.5 font-mono text-xs tracking-wider placeholder-gray-300 focus:outline-none focus:ring-2 focus:ring-[#123C24]/30 focus:border-[#123C24]"
+              />
+              {subCouponCode && (
+                <button
+                  onClick={() => setSubCouponCode('')}
+                  className="text-xs text-gray-400 hover:text-gray-600"
+                >
+                  ✕
+                </button>
+              )}
             </div>
           </div>
 
