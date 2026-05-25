@@ -27,8 +27,8 @@ import { makeRequestContext, withRequestContext } from '@/lib/server/observabili
 import { log } from '@/lib/server/observability/log';
 import { generateVerificationCode } from '@/lib/server/auth';
 import { dummyBcryptCompare } from '@/lib/server/auth/dummy-bcrypt';
-import { enqueueOutbox } from '@/lib/server/outbox';
-import { triggerDevDrain } from '@/lib/server/dev/instant-drain';
+import { createMailer } from '@/lib/server/email';
+import { resetPasswordEmail } from '@/lib/server/auth/email-templates';
 
 const VERIFICATION_TTL_MS = Number(process.env.AUTH_VERIFICATION_TTL_MIN ?? 15) * 60 * 1000;
 
@@ -96,16 +96,19 @@ export async function POST(req: NextRequest): Promise<Response> {
             expiresAt,
           },
         });
-        await enqueueOutbox(tx, {
-          kind: 'email.password_reset',
-          payload: {
-            to: email,
-            code,
-            expiresAt: expiresAt.toISOString(),
-          },
-        });
       });
-      triggerDevDrain();
+
+      const resendKey = process.env.RESEND_API_KEY;
+      const emailFrom = process.env.EMAIL_FROM;
+      if (resendKey && emailFrom) {
+        try {
+          const mailer = createMailer({ RESEND_API_KEY: resendKey, EMAIL_FROM: emailFrom });
+          const tpl = resetPasswordEmail({ code, email, expiresAt: expiresAt.toISOString() });
+          await mailer.send({ to: email, subject: tpl.subject, html: tpl.html });
+        } catch (err) {
+          log.warn('forgot-password: email send failed', { err });
+        }
+      }
       log.info('forgot-password code issued', { userId: user.id });
     } else {
       log.info('forgot-password no-user (enumeration-resist)');

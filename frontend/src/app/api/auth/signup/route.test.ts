@@ -7,10 +7,13 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { NextRequest } from 'next/server';
 
-// Outbox + dummy-bcrypt mocks installed at module level so they hoist above
+// vi.hoisted ensures mockMailerSend is defined before vi.mock factory executes.
+const mockMailerSend = vi.hoisted(() => vi.fn().mockResolvedValue({ id: 'email-1' }));
+
+// Email + dummy-bcrypt mocks installed at module level so they hoist above
 // the route's imports.
-vi.mock('@/lib/server/outbox', () => ({
-  enqueueOutbox: vi.fn().mockResolvedValue({ id: 'outbox-1' }),
+vi.mock('@/lib/server/email', () => ({
+  createMailer: vi.fn().mockReturnValue({ send: mockMailerSend }),
 }));
 vi.mock('@/lib/server/auth/dummy-bcrypt', () => ({
   dummyBcryptCompare: vi.fn().mockResolvedValue(undefined),
@@ -22,7 +25,6 @@ vi.mock('@/lib/server/auth/hibp', () => ({
 import { POST } from './route';
 import { dummyBcryptCompare } from '@/lib/server/auth/dummy-bcrypt';
 import { isPwned } from '@/lib/server/auth/hibp';
-import { enqueueOutbox } from '@/lib/server/outbox';
 
 function makeReq(body: unknown): NextRequest {
   // Build init inline so optional fields (body) aren't typed as `T | undefined`,
@@ -52,7 +54,9 @@ beforeEach(() => {
 });
 
 describe('POST /api/auth/signup', () => {
-  it('creates a new user, code, and outbox event for genuinely new emails', async () => {
+  it('creates a new user, code, and sends verification email directly for genuinely new emails', async () => {
+    vi.stubEnv('RESEND_API_KEY', 'test-key');
+    vi.stubEnv('EMAIL_FROM', 'test@test.com');
     prismaMock.user.findUnique.mockResolvedValue(null);
     prismaMock.user.create.mockResolvedValue({ id: 'u-new' } as never);
     prismaMock.verificationCode.create.mockResolvedValue({} as never);
@@ -67,10 +71,10 @@ describe('POST /api/auth/signup', () => {
     const codeArg = prismaMock.verificationCode.create.mock.calls[0]?.[0];
     expect(codeArg?.data?.type).toBe('EMAIL_VERIFY');
 
-    expect(enqueueOutbox).toHaveBeenCalledTimes(1);
-    const outboxArg = (enqueueOutbox as unknown as ReturnType<typeof vi.fn>).mock.calls[0]?.[1];
-    expect(outboxArg?.kind).toBe('email.verification_code');
-    expect(outboxArg?.payload?.to).toBe('new@example.com');
+    expect(mockMailerSend).toHaveBeenCalledTimes(1);
+    const sendArg = mockMailerSend.mock.calls[0]?.[0];
+    expect(sendArg?.to).toBe('new@example.com');
+    vi.unstubAllEnvs();
   });
 
   it('returns identical 201 + dummy-bcrypts on existing email (enumeration-resist)', async () => {
@@ -86,7 +90,7 @@ describe('POST /api/auth/signup', () => {
     expect(dummyBcryptCompare).toHaveBeenCalledTimes(1);
     expect(prismaMock.user.create).not.toHaveBeenCalled();
     expect(prismaMock.verificationCode.create).not.toHaveBeenCalled();
-    expect(enqueueOutbox).not.toHaveBeenCalled();
+    expect(mockMailerSend).not.toHaveBeenCalled();
   });
 
   it('rejects banned passwords with PASSWORD_BANNED before user lookup', async () => {

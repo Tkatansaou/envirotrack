@@ -35,7 +35,10 @@ describe('CLAUDE.md doc tripwire (DOC-01)', () => {
     const expressHits = lines
       .map((line, idx) => ({ line, idx: idx + 1 }))
       .filter(({ line }) => /\bExpress\b/.test(line))
-      .filter(({ line }) => !/no separate Express backend|There is no.*Express/i.test(line));
+      .filter(
+        ({ line }) =>
+          !/no separate Express backend|There is no.*Express|Aucun backend Express/i.test(line),
+      );
     expect(
       expressHits,
       `Unexpected Express references:\n${expressHits.map((h) => `  L${h.idx}: ${h.line}`).join('\n')}`,

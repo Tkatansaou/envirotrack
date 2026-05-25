@@ -25,8 +25,8 @@ import { createEmailLimiter } from '@/lib/server/middleware/rate-limit-by-email'
 import { makeRequestContext, withRequestContext } from '@/lib/server/observability/request-context';
 import { log } from '@/lib/server/observability/log';
 import { generateVerificationCode } from '@/lib/server/auth';
-import { enqueueOutbox } from '@/lib/server/outbox';
-import { triggerDevDrain } from '@/lib/server/dev/instant-drain';
+import { createMailer } from '@/lib/server/email';
+import { verificationEmail } from '@/lib/server/auth/email-templates';
 
 const VERIFICATION_TTL_MS = Number(process.env.AUTH_VERIFICATION_TTL_MIN ?? 15) * 60 * 1000;
 
@@ -99,16 +99,23 @@ export async function POST(req: NextRequest): Promise<Response> {
             expiresAt,
           },
         });
-        await enqueueOutbox(tx, {
-          kind: 'email.verification_code',
-          payload: {
-            to: user.email,
-            code,
-            expiresAt: expiresAt.toISOString(),
-          },
-        });
       });
-      triggerDevDrain();
+
+      const resendKey = process.env.RESEND_API_KEY;
+      const emailFrom = process.env.EMAIL_FROM;
+      if (resendKey && emailFrom) {
+        try {
+          const mailer = createMailer({ RESEND_API_KEY: resendKey, EMAIL_FROM: emailFrom });
+          const tpl = verificationEmail({
+            code,
+            email: user.email,
+            expiresAt: expiresAt.toISOString(),
+          });
+          await mailer.send({ to: user.email, subject: tpl.subject, html: tpl.html });
+        } catch (err) {
+          log.warn('resend-verification: email send failed', { err });
+        }
+      }
       log.info('resend-verification: code re-issued', { userId: user.id });
     } else {
       // No user, OR already verified — log without leaking which case it is.

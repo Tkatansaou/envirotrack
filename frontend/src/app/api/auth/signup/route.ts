@@ -24,8 +24,8 @@ import { hashPassword, generateVerificationCode } from '@/lib/server/auth';
 import { isBanned } from '@/lib/server/auth/banned-passwords';
 import { isPwned } from '@/lib/server/auth/hibp';
 import { dummyBcryptCompare } from '@/lib/server/auth/dummy-bcrypt';
-import { enqueueOutbox } from '@/lib/server/outbox';
-import { triggerDevDrain } from '@/lib/server/dev/instant-drain';
+import { createMailer } from '@/lib/server/email';
+import { verificationEmail } from '@/lib/server/auth/email-templates';
 
 const PASSWORD_MIN = Number(process.env.AUTH_PASSWORD_MIN_LENGTH ?? 10);
 const VERIFICATION_TTL_MS = Number(process.env.AUTH_VERIFICATION_TTL_MIN ?? 15) * 60 * 1000;
@@ -163,17 +163,22 @@ export async function POST(req: NextRequest): Promise<Response> {
           expiresAt,
         },
       });
-      await enqueueOutbox(tx, {
-        kind: 'email.verification_code',
-        payload: {
-          to: email,
-          code,
-          expiresAt: expiresAt.toISOString(),
-        },
-      });
     });
 
-    triggerDevDrain();
+    // Send verification email directly — bypasses outbox/queue which require
+    // sub-daily crons (disabled on Vercel Hobby). Auth emails are time-sensitive;
+    // direct Resend is reliable enough (no at-most-once guarantee needed here).
+    const resendKey = process.env.RESEND_API_KEY;
+    const emailFrom = process.env.EMAIL_FROM;
+    if (resendKey && emailFrom) {
+      try {
+        const mailer = createMailer({ RESEND_API_KEY: resendKey, EMAIL_FROM: emailFrom });
+        const tpl = verificationEmail({ code, email, expiresAt: expiresAt.toISOString() });
+        await mailer.send({ to: email, subject: tpl.subject, html: tpl.html });
+      } catch (err) {
+        log.warn('signup: verification email send failed', { err });
+      }
+    }
     log.info('signup new user');
     const res = NextResponse.json({ ok: true }, { status: 201 });
     res.headers.set('x-request-id', ctx.requestId);
