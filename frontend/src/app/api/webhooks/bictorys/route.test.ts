@@ -7,12 +7,15 @@ const update = vi.fn();
 const orderFindFirst = vi.fn();
 const orderUpdate = vi.fn();
 const outboxCreate = vi.fn();
+const creditOrderFindFirst = vi.fn();
+const creditOrderUpdate = vi.fn();
 
 const $transaction = vi.fn(async (fn: (tx: unknown) => Promise<unknown>, _opts?: unknown) =>
   fn({
     webhookLog: { findUnique, create, update },
     order: { findFirst: orderFindFirst, update: orderUpdate },
     outboxEvent: { create: outboxCreate },
+    creditOrder: { findFirst: creditOrderFindFirst, update: creditOrderUpdate },
   }),
 );
 
@@ -31,6 +34,8 @@ beforeEach(() => {
   orderFindFirst.mockReset();
   orderUpdate.mockReset();
   outboxCreate.mockReset();
+  creditOrderFindFirst.mockReset();
+  creditOrderUpdate.mockReset();
 });
 
 afterEach(() => {
@@ -94,7 +99,9 @@ describe('POST /api/webhooks/bictorys', () => {
       customerEmail: 'a@b.com',
       amount: 1000,
       currency: 'XOF',
+      status: 'PENDING',
     });
+    creditOrderFindFirst.mockResolvedValueOnce(null); // no credit order — skip credit flow
     outboxCreate.mockResolvedValue({ id: 'ob1' });
     const { POST } = await import('./route');
     const { req } = bictorysFixtureRequest({ status: 'succeeded' });

@@ -101,6 +101,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 
     // 5. Créer CreditOrder + Order dans la même transaction (+ coupon si fourni)
     let appliedDiscountPct: number | null = null;
+    let appliedCouponId: string | null = null;
     let txResult: { creditOrder: { id: string }; order: { id: string; amount: number } } | null =
       null;
     try {
@@ -109,6 +110,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 
         if (couponCode) {
           const coupon = await validateAndRedeemCoupon(tx, couponCode, auth.user.sub);
+          appliedCouponId = coupon.id;
           if (coupon.discountPct) {
             appliedDiscountPct = coupon.discountPct;
             finalPrice = Math.max(1, Math.round(pack.priceXOF * (1 - coupon.discountPct / 100)));
@@ -182,10 +184,19 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
         { status: 201, headers: { 'x-request-id': ctx.requestId } },
       );
     } catch (err) {
-      await prisma.$transaction([
-        prisma.order.update({ where: { id: order.id }, data: { status: 'FAILED' } }),
-        prisma.creditOrder.update({ where: { id: creditOrder.id }, data: { status: 'FAILED' } }),
-      ]);
+      await prisma.$transaction(async (tx) => {
+        await tx.order.update({ where: { id: order.id }, data: { status: 'FAILED' } });
+        await tx.creditOrder.update({ where: { id: creditOrder.id }, data: { status: 'FAILED' } });
+        if (appliedCouponId) {
+          await tx.couponRedemption.delete({
+            where: { couponId_userId: { couponId: appliedCouponId, userId: auth.user.sub } },
+          });
+          await tx.coupon.update({
+            where: { id: appliedCouponId },
+            data: { usedCount: { decrement: 1 } },
+          });
+        }
+      });
 
       if (err instanceof CircuitOpenError) {
         const retryAfter = Math.max(1, Math.ceil((err.retryAt.getTime() - Date.now()) / 1000));
