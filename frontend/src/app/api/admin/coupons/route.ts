@@ -7,8 +7,10 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { z } from 'zod';
 import { prisma } from '@/lib/server/prisma';
 import { requireAdmin, requireSuperadmin } from '@/lib/server/middleware';
+import { verifyCsrf } from '@/lib/server/auth';
 import { logAdminAction } from '@/lib/server/admin/audit';
 import { makeRequestContext, withRequestContext } from '@/lib/server/observability/request-context';
+import { log } from '@/lib/server/observability/log';
 
 const PAGE_SIZE = 20;
 
@@ -69,6 +71,9 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
 export async function POST(req: NextRequest): Promise<NextResponse> {
   const ctx = makeRequestContext(req.headers);
   return withRequestContext(ctx, async () => {
+    const csrfErr = verifyCsrf(req);
+    if (csrfErr) return csrfErr;
+
     const auth = await requireSuperadmin();
     if (auth instanceof NextResponse) return auth;
 
@@ -90,36 +95,44 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       );
     }
 
-    const existing = await prisma.coupon.findUnique({ where: { code } });
-    if (existing) {
+    try {
+      const existing = await prisma.coupon.findUnique({ where: { code } });
+      if (existing) {
+        return NextResponse.json(
+          { error: 'COUPON_CODE_EXISTS', message: `Le code "${code}" existe déjà.` },
+          { status: 409, headers: { 'x-request-id': ctx.requestId } },
+        );
+      }
+
+      const coupon = await prisma.coupon.create({
+        data: {
+          code,
+          discountPct: discountPct ?? null,
+          credits: credits ?? 0,
+          description: description ?? null,
+          maxUses: maxUses ?? null,
+          expiresAt: expiresAt ? new Date(expiresAt) : null,
+        },
+      });
+
+      await logAdminAction(prisma, {
+        actorId: auth.admin.id,
+        action: 'COUPON_CREATE',
+        targetType: 'Coupon',
+        targetId: coupon.id,
+        metadata: { code, discountPct, credits, maxUses },
+      });
+
       return NextResponse.json(
-        { error: 'COUPON_CODE_EXISTS', message: `Le code "${code}" existe déjà.` },
-        { status: 409, headers: { 'x-request-id': ctx.requestId } },
+        { coupon },
+        { status: 201, headers: { 'x-request-id': ctx.requestId } },
+      );
+    } catch (err) {
+      log.error('coupon create failed', { err });
+      return NextResponse.json(
+        { error: 'INTERNAL_ERROR', message: String(err) },
+        { status: 500, headers: { 'x-request-id': ctx.requestId } },
       );
     }
-
-    const coupon = await prisma.coupon.create({
-      data: {
-        code,
-        discountPct: discountPct ?? null,
-        credits: credits ?? 0,
-        description: description ?? null,
-        maxUses: maxUses ?? null,
-        expiresAt: expiresAt ? new Date(expiresAt) : null,
-      },
-    });
-
-    await logAdminAction(prisma, {
-      actorId: auth.admin.id,
-      action: 'COUPON_CREATE',
-      targetType: 'Coupon',
-      targetId: coupon.id,
-      metadata: { code, discountPct, credits, maxUses },
-    });
-
-    return NextResponse.json(
-      { coupon },
-      { status: 201, headers: { 'x-request-id': ctx.requestId } },
-    );
   });
 }
