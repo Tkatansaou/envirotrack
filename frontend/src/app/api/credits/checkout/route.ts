@@ -18,6 +18,7 @@ import { z } from 'zod';
 import { verifyCsrf } from '@/lib/server/auth';
 import { requireAuth } from '@/lib/server/middleware';
 import { makeRequestContext, withRequestContext } from '@/lib/server/observability/request-context';
+import { log } from '@/lib/server/observability/log';
 import { prisma } from '@/lib/server/prisma';
 import {
   getCreditProvider,
@@ -170,7 +171,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
           successUrl: `${publicUrl}/credits/success?orderId=${order.id}`,
           failureUrl: `${publicUrl}/credits/failed?orderId=${order.id}`,
           externalRef: order.id,
-          metadata: { packId, creditOrderId: creditOrder.id },
+          metadata: { packId, creditOrderId: creditOrder.id, paymentType: paymentMethod },
         }),
       );
 
@@ -213,6 +214,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       }
 
       const message = err instanceof Error ? err.message : 'Unknown payment error';
+      log.error('checkout provider charge failed', { orderId: order.id, message });
       return NextResponse.json(
         { error: 'PAYMENT_FAILED', message },
         { status: 502, headers: { 'x-request-id': ctx.requestId } },
