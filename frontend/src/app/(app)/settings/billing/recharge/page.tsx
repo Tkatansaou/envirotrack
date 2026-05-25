@@ -1,6 +1,7 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback, Suspense } from 'react';
+import { useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { ArrowLeft, Check, Smartphone, CreditCard, Zap, Tag, X } from 'lucide-react';
 import { api } from '@/lib/api';
@@ -17,8 +18,9 @@ interface CreditPack {
 
 type PaymentMethod = 'MOBILE_MONEY' | 'CARD';
 
-export default function RechargePage() {
+function RechargePageInner() {
   const { toast } = useToast();
+  const searchParams = useSearchParams();
   const [selectedPackId, setSelectedPackId] = useState<string | null>(null);
   const [method, setMethod] = useState<PaymentMethod>('MOBILE_MONEY');
   const [couponCode, setCouponCode] = useState('');
@@ -45,26 +47,36 @@ export default function RechargePage() {
 
   const selectedPack = packs.find((p) => p.id === selectedPackId);
 
-  async function applyCoupon() {
-    const code = couponInput.trim().toUpperCase();
-    if (!code) return;
-    setCouponChecking(true);
-    setCouponError(null);
-    setCouponPreview(null);
-    try {
-      const res = await api<{
-        discountPct: number | null;
-        credits: number;
-        description: string | null;
-      }>(`/api/credits/coupon?code=${encodeURIComponent(code)}`);
-      setCouponPreview({ discountPct: res.discountPct, description: res.description });
-      setCouponCode(code);
-    } catch (err) {
-      setCouponError(err instanceof Error ? err.message : 'Code invalide.');
-    } finally {
-      setCouponChecking(false);
-    }
-  }
+  const applyCoupon = useCallback(
+    async (codeOverride?: string) => {
+      const code = (codeOverride ?? couponInput).trim().toUpperCase();
+      if (!code) return;
+      setCouponChecking(true);
+      setCouponError(null);
+      setCouponPreview(null);
+      if (!codeOverride) setCouponInput(code);
+      try {
+        const res = await api<{
+          discountPct: number | null;
+          credits: number;
+          description: string | null;
+        }>(`/api/credits/coupon?code=${encodeURIComponent(code)}`);
+        setCouponPreview({ discountPct: res.discountPct, description: res.description });
+        setCouponCode(code);
+        if (codeOverride) setCouponInput(code);
+      } catch (err) {
+        setCouponError(err instanceof Error ? err.message : 'Code invalide.');
+      } finally {
+        setCouponChecking(false);
+      }
+    },
+    [couponInput],
+  );
+
+  useEffect(() => {
+    const urlCoupon = searchParams.get('coupon')?.toUpperCase().trim();
+    if (urlCoupon) applyCoupon(urlCoupon);
+  }, []); // intentionally run once on mount to apply coupon from URL
 
   function removeCoupon() {
     setCouponCode('');
@@ -148,7 +160,7 @@ export default function RechargePage() {
             />
             <button
               type="button"
-              onClick={applyCoupon}
+              onClick={() => applyCoupon()}
               disabled={!couponInput.trim() || couponChecking}
               className="rounded-xl bg-[#123C24] px-4 py-2 text-sm font-semibold text-white hover:bg-[#0f2d1c] disabled:opacity-50 transition-colors"
             >
@@ -344,5 +356,13 @@ export default function RechargePage() {
         Paiement sécurisé — vos crédits sont disponibles dès confirmation du paiement
       </p>
     </div>
+  );
+}
+
+export default function RechargePage() {
+  return (
+    <Suspense>
+      <RechargePageInner />
+    </Suspense>
   );
 }

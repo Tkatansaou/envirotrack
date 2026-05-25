@@ -86,10 +86,10 @@ interface Subscription {
 }
 
 const STATIC_PACKS: CreditPack[] = [
-  { id: 'starter', name: 'Starter', priceXOF: 25000, credits: 500, bonusPct: 0 },
-  { id: 'pro', name: 'Pro', priceXOF: 50000, credits: 1100, bonusPct: 10 },
-  { id: 'studio', name: 'Studio', priceXOF: 100000, credits: 2500, bonusPct: 25 },
-  { id: 'agence', name: 'Agence', priceXOF: 150000, credits: 4000, bonusPct: 33 },
+  { id: 'starter', name: 'Starter', priceXOF: 25000, credits: 250, bonusPct: 0 },
+  { id: 'pro', name: 'Pro', priceXOF: 50000, credits: 550, bonusPct: 10 },
+  { id: 'business', name: 'Business', priceXOF: 100000, credits: 1200, bonusPct: 20 },
+  { id: 'enterprise', name: 'Enterprise', priceXOF: 150000, credits: 2000, bonusPct: 33 },
 ];
 
 const CREDIT_COSTS = [
@@ -151,6 +151,15 @@ export default function BillingPage() {
   const [subscribing, setSubscribing] = useState<string | null>(null);
   const [cancelling, setCancelling] = useState(false);
   const [showPlans, setShowPlans] = useState(false);
+  // Pack coupon preview state
+  const [packCouponInput, setPackCouponInput] = useState('');
+  const [packCouponCode, setPackCouponCode] = useState('');
+  const [packCouponPreview, setPackCouponPreview] = useState<{
+    discountPct: number | null;
+    description: string | null;
+  } | null>(null);
+  const [packCouponChecking, setPackCouponChecking] = useState(false);
+  const [packCouponError, setPackCouponError] = useState<string | null>(null);
 
   useEffect(() => {
     if (typeof window !== 'undefined') {
@@ -190,6 +199,38 @@ export default function BillingPage() {
     `/api/projects?orgId=${selectedOrgId ?? ''}`,
     { skip: !selectedOrgId },
   );
+
+  async function applyPackCoupon() {
+    const code = packCouponInput.trim().toUpperCase();
+    if (!code) return;
+    setPackCouponChecking(true);
+    setPackCouponError(null);
+    setPackCouponPreview(null);
+    try {
+      const res = await api<{
+        discountPct: number | null;
+        credits: number;
+        description: string | null;
+      }>(`/api/credits/coupon?code=${encodeURIComponent(code)}`);
+      if (!res.discountPct) {
+        setPackCouponError('Ce code promo ne donne pas de réduction sur les packs.');
+        return;
+      }
+      setPackCouponPreview({ discountPct: res.discountPct, description: res.description });
+      setPackCouponCode(code);
+    } catch (err) {
+      setPackCouponError(err instanceof Error ? err.message : 'Code invalide.');
+    } finally {
+      setPackCouponChecking(false);
+    }
+  }
+
+  function removePackCoupon() {
+    setPackCouponInput('');
+    setPackCouponCode('');
+    setPackCouponPreview(null);
+    setPackCouponError(null);
+  }
 
   async function handleCoupon(e: FormEvent) {
     e.preventDefault();
@@ -787,19 +828,75 @@ export default function BillingPage() {
             <p className="text-xs text-gray-400 mt-0.5">Rechargez selon vos besoins</p>
           </div>
           <Link
-            href="/settings/billing/recharge"
+            href={
+              packCouponCode
+                ? `/settings/billing/recharge?coupon=${encodeURIComponent(packCouponCode)}`
+                : '/settings/billing/recharge'
+            }
             className="rounded-lg bg-[#123C24] px-3 py-1.5 text-xs font-semibold text-white hover:bg-[#0f2d1c] transition-colors"
           >
             Acheter
           </Link>
         </div>
+
+        {/* Coupon promo pour les packs */}
+        <div className="border-b border-gray-100 px-4 py-3">
+          {packCouponPreview ? (
+            <div className="flex items-center justify-between rounded-xl bg-green-50 border border-green-200 px-3 py-2">
+              <div>
+                <p className="text-xs font-semibold text-green-800">{packCouponCode}</p>
+                <p className="text-xs text-green-700">
+                  −{packCouponPreview.discountPct}% appliqué sur tous les packs
+                </p>
+              </div>
+              <button onClick={removePackCoupon} className="text-gray-400 hover:text-gray-600 ml-3">
+                <X size={13} />
+              </button>
+            </div>
+          ) : (
+            <div className="flex gap-2">
+              <div className="relative flex-1">
+                <Tag size={12} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                <input
+                  type="text"
+                  value={packCouponInput}
+                  onChange={(e) => {
+                    setPackCouponInput(e.target.value.toUpperCase());
+                    setPackCouponError(null);
+                  }}
+                  onKeyDown={(e) => e.key === 'Enter' && applyPackCoupon()}
+                  placeholder="Code promo réduction"
+                  maxLength={30}
+                  className="w-full rounded-lg border border-gray-200 bg-gray-50 pl-8 pr-3 py-1.5 font-mono text-xs tracking-wider placeholder-gray-300 focus:outline-none focus:ring-2 focus:ring-[#123C24]/30 focus:border-[#123C24]"
+                />
+              </div>
+              <button
+                type="button"
+                onClick={applyPackCoupon}
+                disabled={!packCouponInput.trim() || packCouponChecking}
+                className="rounded-lg bg-[#123C24] px-3 py-1.5 text-xs font-semibold text-white hover:bg-[#0f2d1c] disabled:opacity-50 transition-colors"
+              >
+                {packCouponChecking ? '…' : 'Vérifier'}
+              </button>
+            </div>
+          )}
+          {packCouponError && <p className="mt-1 text-xs text-red-600">{packCouponError}</p>}
+        </div>
+
         <div className="grid grid-cols-2 gap-3 p-4 sm:grid-cols-4">
           {packs.map((pack) => {
             const isPopular = pack.bonusPct >= 25;
+            const discountedPrice = packCouponPreview?.discountPct
+              ? Math.max(1, Math.round(pack.priceXOF * (1 - packCouponPreview.discountPct / 100)))
+              : null;
             return (
               <Link
                 key={pack.id}
-                href="/settings/billing/recharge"
+                href={
+                  packCouponCode
+                    ? `/settings/billing/recharge?coupon=${encodeURIComponent(packCouponCode)}`
+                    : '/settings/billing/recharge'
+                }
                 className={`relative rounded-xl border-2 p-4 text-center transition-all hover:shadow-sm ${
                   isPopular
                     ? 'border-[#123C24]/30 bg-green-50'
@@ -809,6 +906,11 @@ export default function BillingPage() {
                 {isPopular && (
                   <span className="absolute -top-2.5 left-1/2 -translate-x-1/2 whitespace-nowrap rounded-full bg-[#123C24] px-2 py-0.5 text-[10px] font-bold text-white">
                     POPULAIRE
+                  </span>
+                )}
+                {packCouponPreview?.discountPct && (
+                  <span className="absolute top-2 right-2 rounded-full bg-green-100 px-1.5 py-0.5 text-[9px] font-bold text-green-700">
+                    −{packCouponPreview.discountPct}%
                   </span>
                 )}
                 <p className="text-xs font-semibold text-gray-500 mb-1">{pack.name}</p>
@@ -821,9 +923,20 @@ export default function BillingPage() {
                     +{pack.bonusPct}% offert
                   </p>
                 )}
-                <p className="mt-2 text-sm font-bold text-[#123C24]">
-                  {pack.priceXOF.toLocaleString('fr-FR')} F
-                </p>
+                {discountedPrice ? (
+                  <div className="mt-2 flex items-baseline justify-center gap-1">
+                    <p className="text-sm font-bold text-[#123C24]">
+                      {discountedPrice.toLocaleString('fr-FR')} F
+                    </p>
+                    <p className="text-[10px] text-gray-400 line-through">
+                      {pack.priceXOF.toLocaleString('fr-FR')}
+                    </p>
+                  </div>
+                ) : (
+                  <p className="mt-2 text-sm font-bold text-[#123C24]">
+                    {pack.priceXOF.toLocaleString('fr-FR')} F
+                  </p>
+                )}
               </Link>
             );
           })}
