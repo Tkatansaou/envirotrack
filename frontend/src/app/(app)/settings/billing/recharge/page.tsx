@@ -119,7 +119,11 @@ export default function RechargePage() {
           {packs.map((pack) => {
             const isSelected = pack.id === selectedPackId;
             const isPopular = pack.bonusPct > 10;
-            const pricePerCredit = Math.round(pack.priceXOF / pack.credits);
+            const discountedPrice = couponPreview?.discountPct
+              ? Math.max(1, Math.round(pack.priceXOF * (1 - couponPreview.discountPct / 100)))
+              : null;
+            const displayPrice = discountedPrice ?? pack.priceXOF;
+            const pricePerCredit = Math.round(displayPrice / pack.credits);
 
             return (
               <button
@@ -144,6 +148,11 @@ export default function RechargePage() {
                       +{pack.bonusPct}% OFFERT
                     </span>
                   )}
+                  {couponPreview?.discountPct && (
+                    <span className="bg-green-100 text-green-700 text-[10px] font-bold px-2 py-0.5 rounded-full">
+                      −{couponPreview.discountPct}%
+                    </span>
+                  )}
                 </div>
 
                 {/* Selected check */}
@@ -161,10 +170,22 @@ export default function RechargePage() {
 
                 <div className="mt-3 pt-3 border-t border-gray-100 flex items-end justify-between">
                   <div>
-                    <p className="text-lg font-bold text-[#123C24]">
-                      {pack.priceXOF.toLocaleString('fr-FR')}
-                      <span className="text-xs font-semibold text-gray-500 ml-1">FCFA</span>
-                    </p>
+                    {discountedPrice ? (
+                      <div className="flex items-baseline gap-1.5">
+                        <p className="text-lg font-bold text-[#123C24]">
+                          {discountedPrice.toLocaleString('fr-FR')}
+                          <span className="text-xs font-semibold text-gray-500 ml-1">FCFA</span>
+                        </p>
+                        <p className="text-xs text-gray-400 line-through">
+                          {pack.priceXOF.toLocaleString('fr-FR')}
+                        </p>
+                      </div>
+                    ) : (
+                      <p className="text-lg font-bold text-[#123C24]">
+                        {pack.priceXOF.toLocaleString('fr-FR')}
+                        <span className="text-xs font-semibold text-gray-500 ml-1">FCFA</span>
+                      </p>
+                    )}
                   </div>
                   <p className="text-xs text-gray-400">{pricePerCredit} F/cr</p>
                 </div>
