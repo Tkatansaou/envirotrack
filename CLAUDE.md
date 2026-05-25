@@ -8,7 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **EnviroTrack** — plateforme SaaS de conformité environnementale (EIES / PGES) pour le Togo, construite sur un monolithe Next.js 16 App Router + Prisma 5 + Neon + Upstash + Cloudinary + Resend + Bictorys + Sentry. Aucun backend Express séparé — toute la logique serveur est sous `frontend/src/app/api/*` et `frontend/src/lib/server/*`. L'application inclut les pages UI complètes (admin back-office, app utilisateur, auth) et les routes API correspondantes.
 
-Origin: bootstrapped from `amadou-template` (the legacy monorepo predecessor) on 2026-05-07; the port to a single Next.js 16 app shipped through 7 phases (auth → OAuth/notifs → admin → uploads/withdrawals → webhooks/cron → docs/tests → final pass). 555/555 unit tests green (the storage swap dropped the now-obsolete `/api/files/[...key]` proxy tests). Deployment hardening added post-v1 : Dockerfile multi-stage, CSP via middleware, `vercel-build` script, 6 versioned migrations baselined.
+Origin: bootstrapped from `amadou-template` (the legacy monorepo predecessor) on 2026-05-07; the port to a single Next.js 16 app shipped through 7 phases (auth → OAuth/notifs → admin → uploads/withdrawals → webhooks/cron → docs/tests → final pass). 555/555 unit tests green (the storage swap dropped the now-obsolete `/api/files/[...key]` proxy tests). Deployment hardening added post-v1 : Dockerfile multi-stage, CSP via middleware, `vercel-build` script, 7 versioned migrations baselined (migration 7 adds `trialEndsAt` for the 14-day free trial).
 
 **For an AI agent picking up this repo:** the architecture sections below describe what's already been built. Anything not listed under "Files Claude must NOT modify" is fair game to extend, refactor, or replace per your fork's needs — that's the point of a starter. The protected list is the small set of files where the invariants are subtle (refresh-token races, HMAC integrity, advisory locks…); everything else is the fork's surface area.
 
@@ -79,6 +79,10 @@ Integration tests are deferred (no formal harness in v1) — `pnpm smoke:auth` p
 
 **Coupon system** — `Coupon` model: `code` (uppercase, 3-30 chars), `discountPct Int?` (rebate %), `credits Int` (gift credits, default 0), `maxUses Int?`, `expiresAt DateTime?`, `active Boolean`. Shared validator: [frontend/src/lib/server/coupons/validate.ts](frontend/src/lib/server/coupons/validate.ts) — exports `validateAndRedeemCoupon(tx, code, userId)` which atomically checks validity, checks for duplicate redemption, and increments `usedCount`. MUST be called inside `prisma.$transaction(async tx => {...})`. Routes that use it: `POST /api/credits/coupon` (gift credits), `POST /api/credits/checkout` (discount on pack purchase), `POST /api/subscriptions` (discount on subscription).
 
+**Subscription gate & 14-day free trial** — [frontend/src/app/(app)/layout.tsx](frontend/src/app/(app)/layout.tsx) enforces access control for all authenticated app pages. On mount it calls `GET /api/subscriptions/me` which returns `{ subscription, trial: { active, endsAt, daysLeft }, isAdmin }`. Access is granted if any of: `isAdmin=true` (ADMIN/SUPERADMIN bypass — never blocked), `hasActiveSub` (subscription status ACTIVE or PAST_DUE), or `isInTrial` (trial active). Users without access are redirected to `/settings/billing?plans=1` which auto-opens the plan picker. A yellow trial banner is shown at the top of the app during the trial period. The `trialEndsAt` field on User is set once at email verification (`POST /api/auth/verify-email`) to `now + 14 days`. ADMIN/SUPERADMIN accounts created before the trial feature have `trialEndsAt=null` and no subscription — they are bypassed via `isAdmin`, never redirected. The admin sidebar link ("Administration" → `/admin`) is rendered conditionally only when `isAdmin=true`.
+
+**SEO** — [frontend/src/app/sitemap.ts](frontend/src/app/sitemap.ts) exposes 4 public pages (`/`, `/auth/login`, `/auth/signup`, `/legal/cgu`) at `https://envirotrack.uk/sitemap.xml`. [frontend/src/app/robots.ts](frontend/src/app/robots.ts) allows crawling of public paths and disallows `/dashboard`, `/projects/`, `/settings/`, `/admin/`, `/api/`. Root layout metadata ([frontend/src/app/layout.tsx](frontend/src/app/layout.tsx)) includes OpenGraph, Twitter card, canonical URL, and expanded keywords (EIES, PGES, ANGE, conformité environnementale, Togo). Submit `https://envirotrack.uk/sitemap.xml` in Google Search Console to index the site.
+
 ## Files Claude must NOT modify (battle-tested)
 
 - [frontend/src/lib/server/auth.ts](frontend/src/lib/server/auth.ts), [crypto.ts](frontend/src/lib/server/crypto.ts), [logger.ts](frontend/src/lib/server/logger.ts), [redis.ts](frontend/src/lib/server/redis.ts), [rate-limit-store.ts](frontend/src/lib/server/rate-limit-store.ts), [slug.ts](frontend/src/lib/server/slug.ts), [zod-helpers.ts](frontend/src/lib/server/zod-helpers.ts) — refresh-token races, log-redaction holes, retry storms on POSTs all live here
@@ -128,6 +132,8 @@ If a change is genuinely required in any of these, surface a brief "I am about t
 - Org role precedence: `MEMBER` < `ADMIN` < `OWNER`. `requireOrgRole(min, paramName)` returns **404** to non-members (not 403) so org existence isn't leaked.
 - OAuth callback MUST refuse `email_verified !== true` from Google — otherwise an attacker with an unverified Google account matching a victim's email can take over the account via auto-linking.
 - Cron handlers MUST verify `Authorization: Bearer ${CRON_SECRET}` to prevent unauthenticated invocation of background work.
+- Subscription gate in `(app)/layout.tsx` checks `isAdmin || hasActiveSub || isInTrial`. ADMIN/SUPERADMIN accounts must NEVER be redirected to billing regardless of subscription/trial state — the bypass is `isAdmin` from `GET /api/subscriptions/me`. Do not remove this bypass.
+- `trialEndsAt` is set **once** at email verification (`POST /api/auth/verify-email`) and must never be updated elsewhere — setting it a second time resets the clock, giving unlimited free trials.
 - Cookies stay `httpOnly` + `Secure` (prod) + `SameSite=Lax`.
 - Sentry init stays in [frontend/instrumentation.ts](frontend/instrumentation.ts) `register()` — do not move it into a route module (the hook fires before app code, route imports do not).
 
@@ -159,7 +165,7 @@ Required env vars at minimum: `DATABASE_URL`, `DIRECT_URL`, `JWT_SECRET` (≥32 
 
 **CSP** — applied in [frontend/middleware.ts](frontend/middleware.ts) via `addSecurityHeaders()` wrapping every `NextResponse` return. Current policy: `default-src 'self'`, images allow `res.cloudinary.com`, `connect-src` allows Sentry, `frame-ancestors 'none'`. Tighten `script-src` (remove `unsafe-eval`) once Sentry's SDK no longer needs it.
 
-**Migrations** — 6 versioned migrations under [frontend/prisma/migrations/](frontend/prisma/migrations/) are baselined and applied. Always run `pnpm db:migrate:dev` (not `db:push`) for schema changes going forward so the migration history stays clean for `migrate deploy` in CI/prod.
+**Migrations** — 7 versioned migrations under [frontend/prisma/migrations/](frontend/prisma/migrations/) are baselined and applied (migration 7 = `6_trial`: adds `trialEndsAt TIMESTAMP(3)` to `User`). Always run `pnpm db:migrate:dev` (not `db:push`) for schema changes going forward so the migration history stays clean for `migrate deploy` in CI/prod.
 
 ## Design system
 
