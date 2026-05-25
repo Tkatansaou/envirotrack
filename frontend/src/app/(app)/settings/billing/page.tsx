@@ -194,6 +194,27 @@ export default function BillingPage() {
     { skip: !selectedOrgId },
   );
 
+  // Auto-apply welcome discount for new users (balance=0, no past purchases)
+  useEffect(() => {
+    if (!balanceData || packDiscountPct) return;
+    const welcomeCode = process.env.NEXT_PUBLIC_WELCOME_COUPON;
+    if (!welcomeCode) return;
+    const isNewUser =
+      balanceData.balance === 0 &&
+      !balanceData.transactions.some((tx) => tx.reason === 'PACK_PURCHASE');
+    if (!isNewUser) return;
+    api<{ discountPct: number | null; credits: number; description: string | null }>(
+      `/api/credits/coupon?code=${encodeURIComponent(welcomeCode)}`,
+    )
+      .then((preview) => {
+        if (preview.discountPct) {
+          setPackDiscountPct(preview.discountPct);
+          setPackDiscountCode(welcomeCode);
+        }
+      })
+      .catch(() => {});
+  }, [balanceData, packDiscountPct]);
+
   async function handleCoupon(e: FormEvent) {
     e.preventDefault();
     const code = couponCode.trim().toUpperCase();

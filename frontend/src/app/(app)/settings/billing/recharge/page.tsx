@@ -36,6 +36,10 @@ function RechargePageInner() {
   const { data: packsData, loading: packsLoading } = useApi<{ packs: CreditPack[] }>(
     '/api/credits/packs',
   );
+  const { data: balanceData } = useApi<{
+    balance: number;
+    transactions: { reason: string }[];
+  }>('/api/credits/balance');
 
   const packs = packsData?.packs ?? [];
 
@@ -77,6 +81,17 @@ function RechargePageInner() {
     const urlCoupon = searchParams.get('coupon')?.toUpperCase().trim();
     if (urlCoupon) applyCoupon(urlCoupon);
   }, []); // intentionally run once on mount to apply coupon from URL
+
+  // Auto-apply welcome discount for new users (balance=0, no past purchases)
+  useEffect(() => {
+    if (!balanceData || couponCode) return;
+    const welcomeCode = process.env.NEXT_PUBLIC_WELCOME_COUPON;
+    if (!welcomeCode) return;
+    const isNewUser =
+      balanceData.balance === 0 &&
+      !balanceData.transactions.some((tx) => tx.reason === 'PACK_PURCHASE');
+    if (isNewUser) applyCoupon(welcomeCode);
+  }, [balanceData, couponCode, applyCoupon]);
 
   function removeCoupon() {
     setCouponCode('');
