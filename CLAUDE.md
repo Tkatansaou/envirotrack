@@ -133,11 +133,27 @@ If a change is genuinely required in any of these, surface a brief "I am about t
 
 ## Deployment
 
+**Production URL: `https://envirotrack.uk`**
+Vercel project: `tchaa-katansaous-projects/frontend` (projectId: `prj_92zGS9SVeZpluqvPxWOqNq6cSOXj`)
+GitHub: `https://github.com/Tkatansaou/envirotrack` (branch: `main`)
+
 **Vercel (recommended)** — `Root Directory = frontend`. The `vercel-build` script in [frontend/package.json](frontend/package.json) runs `prisma migrate deploy && next build` on every deploy. Requires two Neon URLs:
 - `DATABASE_URL` — pooler URL (`?pgbouncer=true&connection_limit=1`) for runtime queries
 - `DIRECT_URL` — non-pooled URL for `prisma migrate deploy` (pooler breaks DDL)
 
-Required env vars at minimum: `DATABASE_URL`, `DIRECT_URL`, `JWT_SECRET` (≥32 chars), `CRON_SECRET`, `PUBLIC_URL`, `ENCRYPTION_KEY` (32-byte base64).
+Required env vars at minimum: `DATABASE_URL`, `DIRECT_URL`, `JWT_SECRET` (≥32 chars), `CRON_SECRET`, `APP_URL`, `NEXT_PUBLIC_APP_URL`, `ENCRYPTION_KEY` (32-byte base64).
+
+**Vercel Hobby plan — cron restriction:** Hobby accounts only allow daily cron jobs. The 4 sub-daily crons (`outbox-drain */1`, `email-queue-drain */1`, `verification-cleanup 0 *`, `order-expiration */5`) are DISABLED in [frontend/vercel.json](frontend/vercel.json). To re-enable → upgrade to Vercel Pro ($20/month). Active daily crons: `webhook-log-purge`, `email-job-purge`, `pges-reminders`, `regulatory-sync`, `subscription-renewal`.
+
+**tsconfig monorepo note:** `frontend/tsconfig.json` has `tsconfig.base.json` settings inlined directly (no `extends: "../tsconfig.base.json"`). Reason: Vercel scoped deploys from `frontend/` do NOT include parent-directory files, so the `extends` path would fail at build time. If you add compiler options, edit `frontend/tsconfig.json` directly — do not restore the `extends`.
+
+**Env var push on Windows — CRITICAL:** Always push Vercel env vars via bash `printf '%s' "$VALUE" | vercel env add KEY production`. NEVER use PowerShell piping — PowerShell 5.1 on Windows prepends a UTF-8 BOM (U+FEFF) to values, which silently corrupts URLs (Upstash, DATABASE_URL, etc.) and adds invisible whitespace to secrets (CRON_SECRET). The bash `printf '%s'` form writes the exact bytes with no BOM or newline.
+
+**Cloudflare DNS (envirotrack.uk):**
+- Zone ID: `98ffce81213a3cb7cb0768bdb90dcd49`
+- A record: `@ → 76.76.21.21` (Vercel IP, proxy disabled)
+- CNAME: `www → cname.vercel-dns.com` (proxy disabled)
+- Existing records (do not touch): MX (Amazon SES), TXT (Google site verification, Resend DKIM, SPF)
 
 **Docker** — [frontend/Dockerfile](frontend/Dockerfile) is a 3-stage build (deps → builder → runner) on `node:20.18.1-alpine`. Non-root user `nextjs:nodejs`. Copies the Next.js standalone bundle + Prisma client + schema. Run with all required env vars at container start.
 
