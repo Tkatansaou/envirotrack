@@ -37,12 +37,15 @@ export const POST = createWebhookHandler({
 
   async onPaid(payload, tx) {
     const externalRef = String(payload.charge_id ?? payload.chargeId ?? payload.id ?? '');
-    if (!externalRef) return {}; // no id to correlate
+    if (!externalRef) return {};
 
     const order = await tx.order.findFirst({
       where: { providerChargeId: externalRef },
     });
-    if (!order) return {}; // unknown charge — log + drop (no DB row to update)
+    if (!order) return {};
+
+    // Idempotency guard — already processed
+    if (order.status === 'PAID') return {};
 
     const paymentMethod = payload.payment_method ? String(payload.payment_method) : null;
 
@@ -55,9 +58,48 @@ export const POST = createWebhookHandler({
       },
     });
 
-    // Outbox emits stay inside the factory's Serializable tx so the rows
-    // commit atomically with the status change. The drain cron picks them up
-    // out-of-band.
+    // ── Credit the user's balance ────────────────────────────────────────
+    // A CreditOrder links this payment to a pack purchase. Find it, mark
+    // it COMPLETED, and increment the user's creditBalance atomically
+    // inside this same Serializable tx so the credit is never lost.
+    const creditOrder = await tx.creditOrder.findFirst({
+      where: { orderId: order.id, status: 'PENDING' },
+    });
+    if (creditOrder && order.userId) {
+      const pack = await tx.creditPack.findUnique({ where: { id: creditOrder.packId } });
+      if (pack) {
+        const user = await tx.user.findUniqueOrThrow({
+          where: { id: order.userId },
+          select: { creditBalance: true },
+        });
+        const balanceBefore = user.creditBalance;
+        const balanceAfter = balanceBefore + pack.credits;
+
+        await tx.user.update({
+          where: { id: order.userId },
+          data: { creditBalance: { increment: pack.credits } },
+        });
+
+        await tx.creditTransaction.create({
+          data: {
+            userId: order.userId,
+            type: 'CREDIT',
+            amount: pack.credits,
+            balanceBefore,
+            balanceAfter,
+            reason: 'PACK_PURCHASE',
+            description: `Achat pack ${pack.name} — commande ${order.id}`,
+          },
+        });
+
+        await tx.creditOrder.update({
+          where: { id: creditOrder.id },
+          data: { status: 'COMPLETED' },
+        });
+      }
+    }
+
+    // ── Outbox side-effects (notifications + email) ──────────────────────
     if (order.userId) {
       await enqueueOutbox(tx, {
         kind: 'notification.payment_received',
