@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
-import { ArrowLeft, Check, Smartphone, CreditCard, Zap } from 'lucide-react';
+import { ArrowLeft, Check, Smartphone, CreditCard, Zap, Tag, X } from 'lucide-react';
 import { api } from '@/lib/api';
 import { useApi } from '@/lib/useApi';
 import { useToast } from '@/contexts/ToastContext';
@@ -21,6 +21,14 @@ export default function RechargePage() {
   const { toast } = useToast();
   const [selectedPackId, setSelectedPackId] = useState<string | null>(null);
   const [method, setMethod] = useState<PaymentMethod>('MOBILE_MONEY');
+  const [couponCode, setCouponCode] = useState('');
+  const [couponInput, setCouponInput] = useState('');
+  const [couponPreview, setCouponPreview] = useState<{
+    discountPct: number | null;
+    description: string | null;
+  } | null>(null);
+  const [couponError, setCouponError] = useState<string | null>(null);
+  const [couponChecking, setCouponChecking] = useState(false);
   const [loading, setLoading] = useState(false);
 
   const { data: packsData, loading: packsLoading } = useApi<{ packs: CreditPack[] }>(
@@ -37,6 +45,34 @@ export default function RechargePage() {
 
   const selectedPack = packs.find((p) => p.id === selectedPackId);
 
+  async function applyCoupon() {
+    const code = couponInput.trim().toUpperCase();
+    if (!code) return;
+    setCouponChecking(true);
+    setCouponError(null);
+    setCouponPreview(null);
+    try {
+      const res = await api<{
+        discountPct: number | null;
+        credits: number;
+        description: string | null;
+      }>(`/api/credits/coupon?code=${encodeURIComponent(code)}`);
+      setCouponPreview({ discountPct: res.discountPct, description: res.description });
+      setCouponCode(code);
+    } catch (err) {
+      setCouponError(err instanceof Error ? err.message : 'Code invalide.');
+    } finally {
+      setCouponChecking(false);
+    }
+  }
+
+  function removeCoupon() {
+    setCouponCode('');
+    setCouponInput('');
+    setCouponPreview(null);
+    setCouponError(null);
+  }
+
   async function handleCheckout() {
     if (!selectedPackId || loading) return;
     setLoading(true);
@@ -45,7 +81,11 @@ export default function RechargePage() {
         '/api/credits/checkout',
         {
           method: 'POST',
-          body: { packId: selectedPackId, paymentMethod: method },
+          body: {
+            packId: selectedPackId,
+            paymentMethod: method,
+            ...(couponCode ? { couponCode } : {}),
+          },
         },
       );
       window.location.href = result.paymentUrl;
@@ -192,24 +232,92 @@ export default function RechargePage() {
         </div>
       </div>
 
-      {/* CTA */}
-      <button
-        type="button"
-        onClick={handleCheckout}
-        disabled={!selectedPackId || loading || packsLoading}
-        className="w-full bg-[#123C24] text-white py-3.5 rounded-full font-semibold text-sm hover:bg-green-900 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-      >
-        {loading ? (
-          'Redirection vers le paiement…'
-        ) : selectedPack ? (
-          <>
-            <Zap size={15} />
-            Payer {selectedPack.priceXOF.toLocaleString('fr-FR')} FCFA
-          </>
+      {/* Coupon */}
+      <div className="bg-white rounded-2xl border border-gray-200 p-5 mb-6">
+        <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3 flex items-center gap-1.5">
+          <Tag size={13} className="text-gray-400" />
+          Code promo
+        </p>
+
+        {couponPreview ? (
+          <div className="flex items-center justify-between rounded-xl bg-green-50 border border-green-200 px-4 py-2.5">
+            <div>
+              <p className="text-sm font-semibold text-green-800">{couponCode}</p>
+              <p className="text-xs text-green-700">
+                {couponPreview.discountPct
+                  ? `−${couponPreview.discountPct}% sur ce pack`
+                  : (couponPreview.description ?? 'Code promo appliqué')}
+              </p>
+            </div>
+            <button onClick={removeCoupon} className="text-gray-400 hover:text-gray-600 ml-3">
+              <X size={14} />
+            </button>
+          </div>
         ) : (
-          'Sélectionnez un pack'
+          <div className="flex gap-2">
+            <input
+              type="text"
+              value={couponInput}
+              onChange={(e) => {
+                setCouponInput(e.target.value.toUpperCase());
+                setCouponError(null);
+              }}
+              onKeyDown={(e) => e.key === 'Enter' && applyCoupon()}
+              placeholder="ex : BIENVENUE"
+              maxLength={30}
+              className="flex-1 rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 font-mono text-sm tracking-wider placeholder-gray-300 focus:outline-none focus:ring-2 focus:ring-[#123C24]/30 focus:border-[#123C24]"
+            />
+            <button
+              type="button"
+              onClick={applyCoupon}
+              disabled={!couponInput.trim() || couponChecking}
+              className="rounded-xl bg-[#123C24] px-4 py-2 text-sm font-semibold text-white hover:bg-[#0f2d1c] disabled:opacity-50 transition-colors"
+            >
+              {couponChecking ? '…' : 'Vérifier'}
+            </button>
+          </div>
         )}
-      </button>
+
+        {couponError && <p className="mt-1.5 text-xs text-red-600">{couponError}</p>}
+      </div>
+
+      {/* CTA */}
+      {(() => {
+        const basePrice = selectedPack?.priceXOF ?? 0;
+        const discountedPrice =
+          couponPreview?.discountPct && basePrice
+            ? Math.max(1, Math.round(basePrice * (1 - couponPreview.discountPct / 100)))
+            : null;
+        return (
+          <button
+            type="button"
+            onClick={handleCheckout}
+            disabled={!selectedPackId || loading || packsLoading}
+            className="w-full bg-[#123C24] text-white py-3.5 rounded-full font-semibold text-sm hover:bg-green-900 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+          >
+            {loading ? (
+              'Redirection vers le paiement…'
+            ) : selectedPack ? (
+              <>
+                <Zap size={15} />
+                {discountedPrice ? (
+                  <>
+                    Payer{' '}
+                    <span className="line-through opacity-60 mr-1">
+                      {basePrice.toLocaleString('fr-FR')}
+                    </span>
+                    {discountedPrice.toLocaleString('fr-FR')} FCFA
+                  </>
+                ) : (
+                  <>Payer {basePrice.toLocaleString('fr-FR')} FCFA</>
+                )}
+              </>
+            ) : (
+              'Sélectionnez un pack'
+            )}
+          </button>
+        );
+      })()}
 
       <p className="text-xs text-gray-400 text-center mt-3">
         Paiement sécurisé — vos crédits sont disponibles dès confirmation du paiement

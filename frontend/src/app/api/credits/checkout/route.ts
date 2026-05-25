@@ -86,14 +86,18 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       throw err;
     }
 
-    const envPublicUrl = process.env.PUBLIC_URL;
-    if (!envPublicUrl && process.env.NODE_ENV === 'production') {
+    const publicUrl =
+      process.env.APP_URL ?? process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000';
+    if (
+      !process.env.APP_URL &&
+      !process.env.NEXT_PUBLIC_APP_URL &&
+      process.env.NODE_ENV === 'production'
+    ) {
       return NextResponse.json(
-        { error: 'PAYMENT_PROVIDER_UNCONFIGURED', message: 'PUBLIC_URL not set' },
+        { error: 'PAYMENT_PROVIDER_UNCONFIGURED', message: 'APP_URL not set' },
         { status: 503, headers: { 'x-request-id': ctx.requestId } },
       );
     }
-    const publicUrl = envPublicUrl ?? 'http://localhost:3000';
 
     // 5. Créer CreditOrder + Order dans la même transaction (+ coupon si fourni)
     let appliedDiscountPct: number | null = null;
