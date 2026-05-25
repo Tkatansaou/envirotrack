@@ -15,7 +15,12 @@ import {
   Leaf,
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
+import { useApi } from '@/lib/useApi';
 import FeedbackWidget from '@/components/FeedbackWidget';
+
+interface SubCheck {
+  subscription: { id: string; status: string } | null;
+}
 
 const NAV_ITEMS = [
   { href: '/dashboard', icon: LayoutDashboard, label: 'Tableau de bord' },
@@ -31,6 +36,19 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   const { user, loading, logout } = useAuth();
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
+  const {
+    data: subData,
+    loading: subLoading,
+    error: subError,
+  } = useApi<SubCheck>('/api/subscriptions/me', { skip: !user });
+
+  const isBillingPath = pathname.startsWith('/settings/billing');
+
+  const hasActiveSub =
+    subData !== null &&
+    !!subData?.subscription &&
+    ['ACTIVE', 'PAST_DUE'].includes(subData.subscription.status);
+
   useEffect(() => {
     if (!loading && !user) {
       router.replace('/auth/login');
@@ -38,10 +56,18 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   }, [loading, user, router]);
 
   useEffect(() => {
+    if (loading || !user) return;
+    if (subLoading || subError) return;
+    if (!hasActiveSub && !isBillingPath) {
+      router.replace('/settings/billing?plans=1');
+    }
+  }, [loading, user, subLoading, subError, hasActiveSub, isBillingPath, router]);
+
+  useEffect(() => {
     setSidebarOpen(false);
   }, [pathname]);
 
-  if (loading || !user) {
+  if (loading || !user || (subLoading && !isBillingPath)) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
         <div className="flex items-center gap-2 text-gray-400">

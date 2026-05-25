@@ -151,6 +151,13 @@ export default function BillingPage() {
   const [cancelling, setCancelling] = useState(false);
   const [showPlans, setShowPlans] = useState(false);
 
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search);
+      if (params.get('plans') === '1') setShowPlans(true);
+    }
+  }, []);
+
   const {
     data: balanceData,
     loading: balanceLoading,
