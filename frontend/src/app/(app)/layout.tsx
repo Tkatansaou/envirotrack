@@ -23,6 +23,7 @@ import FeedbackWidget from '@/components/FeedbackWidget';
 interface SubCheck {
   subscription: { id: string; status: string } | null;
   trial: { active: boolean; endsAt: string | null; daysLeft: number };
+  isAdmin: boolean;
 }
 
 const NAV_ITEMS = [
@@ -54,9 +55,10 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
 
   const isInTrial = subData?.trial?.active ?? false;
   const trialDaysLeft = subData?.trial?.daysLeft ?? 0;
+  const isAdmin = subData?.isAdmin ?? false;
 
-  // Access granted if has active subscription OR is within free trial.
-  const hasAccess = hasActiveSub || isInTrial;
+  // Access granted if: admin/superadmin, active subscription, or within free trial.
+  const hasAccess = isAdmin || hasActiveSub || isInTrial;
 
   useEffect(() => {
     if (!loading && !user) {

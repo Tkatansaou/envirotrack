@@ -24,7 +24,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       }),
       prisma.user.findUnique({
         where: { id: auth.user.sub },
-        select: { trialEndsAt: true },
+        select: { trialEndsAt: true, role: true },
       }),
     ]);
 
@@ -35,10 +35,14 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       ? Math.ceil((trialEndsAt!.getTime() - now) / (24 * 60 * 60 * 1000))
       : 0;
 
+    // Admins and superadmins always have access — never blocked by the subscription gate.
+    const isAdmin = userRow?.role === 'ADMIN' || userRow?.role === 'SUPERADMIN';
+
     return NextResponse.json(
       {
         subscription,
         trial: { active: trialActive, endsAt: trialEndsAt?.toISOString() ?? null, daysLeft },
+        isAdmin,
       },
       { headers: { 'x-request-id': ctx.requestId } },
     );
