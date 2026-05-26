@@ -81,16 +81,16 @@ function getPaytech(): CreditProviderBundle | null {
 
 /**
  * Résout le provider selon la méthode choisie.
- * MOBILE_MONEY : Bictorys → Moneroo (fallback).
+ * MOBILE_MONEY : Moneroo (principal) → Bictorys (fallback si Moneroo absent).
  * CARD         : PayTech.
  * Lève CreditProviderUnconfiguredError si aucun provider n'est configuré.
  */
 export function getCreditProvider(method: CreditPaymentMethod): CreditProviderBundle {
   if (method === 'MOBILE_MONEY') {
-    const b = getBictorys();
-    if (b) return b;
     const m = getMoneroo();
     if (m) return m;
+    const b = getBictorys();
+    if (b) return b;
     throw new CreditProviderUnconfiguredError('MOBILE_MONEY');
   }
   // CARD
