@@ -3,8 +3,9 @@
  *
  * Routing :
  *   paymentMethod = "MOBILE_MONEY"
- *     → Bictorys (principal, UEMOA)
- *     → Moneroo  (fallback si BICTORYS_* absent ou circuit ouvert)
+ *     → FedaPay  (principal — Wave, Orange, Moov, MTN, Free Money au Togo/UEMOA)
+ *     → Moneroo  (fallback si FEDAPAY_SECRET_KEY absent)
+ *     → Bictorys (dernier recours)
  *   paymentMethod = "CARD"
  *     → PayTech (cartes Visa/Mastercard en FCFA)
  *
@@ -14,6 +15,7 @@ import 'server-only';
 import { createBictorysProvider } from '@/lib/server/payments/bictorys';
 import { createMonerooProvider } from '@/lib/server/payments/moneroo';
 import { createPaytechProvider } from '@/lib/server/payments/paytech';
+import { createFedapayProvider } from '@/lib/server/payments/fedapay';
 import type { PaymentProvider } from '@/lib/server/payments/provider';
 import type { WebhookProvider } from '@/lib/server/webhook/handler';
 
@@ -36,6 +38,7 @@ export interface CreditProviderBundle {
 let _bictorys: CreditProviderBundle | null = null;
 let _moneroo: CreditProviderBundle | null = null;
 let _paytech: CreditProviderBundle | null = null;
+let _fedapay: CreditProviderBundle | null = null;
 
 function getBictorys(): CreditProviderBundle | null {
   if (_bictorys) return _bictorys;
@@ -50,6 +53,18 @@ function getBictorys(): CreditProviderBundle | null {
   });
   _bictorys = { provider: handle, webhookProvider: handle.webhookProvider };
   return _bictorys;
+}
+
+function getFedapay(): CreditProviderBundle | null {
+  if (_fedapay) return _fedapay;
+  const key = process.env.FEDAPAY_SECRET_KEY ?? '';
+  if (!key) return null;
+  const handle = createFedapayProvider({
+    FEDAPAY_SECRET_KEY: key,
+    FEDAPAY_WEBHOOK_SECRET: process.env.FEDAPAY_WEBHOOK_SECRET,
+  });
+  _fedapay = { provider: handle.provider, webhookProvider: handle.webhookProvider };
+  return _fedapay;
 }
 
 function getMoneroo(): CreditProviderBundle | null {
@@ -81,12 +96,14 @@ function getPaytech(): CreditProviderBundle | null {
 
 /**
  * Résout le provider selon la méthode choisie.
- * MOBILE_MONEY : Moneroo (principal) → Bictorys (fallback si Moneroo absent).
+ * MOBILE_MONEY : FedaPay → Moneroo → Bictorys (premier configuré gagne).
  * CARD         : PayTech.
  * Lève CreditProviderUnconfiguredError si aucun provider n'est configuré.
  */
 export function getCreditProvider(method: CreditPaymentMethod): CreditProviderBundle {
   if (method === 'MOBILE_MONEY') {
+    const f = getFedapay();
+    if (f) return f;
     const m = getMoneroo();
     if (m) return m;
     const b = getBictorys();
@@ -104,4 +121,5 @@ export function __resetCreditProviderSingletons(): void {
   _bictorys = null;
   _moneroo = null;
   _paytech = null;
+  _fedapay = null;
 }
