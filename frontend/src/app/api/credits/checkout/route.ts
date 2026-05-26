@@ -171,7 +171,11 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
           successUrl: `${publicUrl}/credits/success?orderId=${order.id}`,
           failureUrl: `${publicUrl}/credits/failed?orderId=${order.id}`,
           externalRef: order.id,
-          metadata: { packId, creditOrderId: creditOrder.id, paymentType: paymentMethod },
+          metadata: {
+            packId,
+            creditOrderId: creditOrder.id,
+            paymentType: paymentMethod === 'CARD' ? 'card' : 'wave_money',
+          },
         }),
       );
 
