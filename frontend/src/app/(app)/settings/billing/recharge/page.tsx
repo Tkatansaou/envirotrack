@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback, Suspense } from 'react';
+import { useState, useEffect, useCallback, useRef, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { ArrowLeft, Check, Smartphone, CreditCard, Zap, Tag, X } from 'lucide-react';
@@ -32,6 +32,7 @@ function RechargePageInner() {
   const [couponError, setCouponError] = useState<string | null>(null);
   const [couponChecking, setCouponChecking] = useState(false);
   const [loading, setLoading] = useState(false);
+  const autoAppliedRef = useRef(false);
 
   const { data: packsData, loading: packsLoading } = useApi<{ packs: CreditPack[] }>(
     '/api/credits/packs',
@@ -52,11 +53,11 @@ function RechargePageInner() {
   const selectedPack = packs.find((p) => p.id === selectedPackId);
 
   const applyCoupon = useCallback(
-    async (codeOverride?: string) => {
+    async (codeOverride?: string, silent?: boolean) => {
       const code = (codeOverride ?? couponInput).trim().toUpperCase();
       if (!code) return;
       setCouponChecking(true);
-      setCouponError(null);
+      if (!silent) setCouponError(null);
       setCouponPreview(null);
       if (!codeOverride) setCouponInput(code);
       try {
@@ -69,7 +70,7 @@ function RechargePageInner() {
         setCouponCode(code);
         if (codeOverride) setCouponInput(code);
       } catch (err) {
-        setCouponError(err instanceof Error ? err.message : 'Code invalide.');
+        if (!silent) setCouponError(err instanceof Error ? err.message : 'Code invalide.');
       } finally {
         setCouponChecking(false);
       }
@@ -84,13 +85,16 @@ function RechargePageInner() {
 
   // Auto-apply welcome discount for new users (balance=0, no past purchases)
   useEffect(() => {
-    if (!balanceData || couponCode) return;
+    if (!balanceData || couponCode || autoAppliedRef.current) return;
     const welcomeCode = process.env.NEXT_PUBLIC_WELCOME_COUPON;
     if (!welcomeCode) return;
     const isNewUser =
       balanceData.balance === 0 &&
       !balanceData.transactions.some((tx) => tx.reason === 'PACK_PURCHASE');
-    if (isNewUser) applyCoupon(welcomeCode);
+    if (isNewUser) {
+      autoAppliedRef.current = true;
+      applyCoupon(welcomeCode, true);
+    }
   }, [balanceData, couponCode, applyCoupon]);
 
   function removeCoupon() {
