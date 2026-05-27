@@ -46,7 +46,7 @@ export interface ResetPasswordEmailArgs {
  * potentially user-controlled) value before interpolating into an HTML
  * template string.
  */
-function htmlEscape(s: string): string {
+export function htmlEscape(s: string): string {
   return s
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')

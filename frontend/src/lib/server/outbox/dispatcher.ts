@@ -272,6 +272,17 @@ async function dispatchEvent(deps: OutboxDispatcherDeps, event: OutboxEvent): Pr
       });
       return;
     }
+    case 'email.contact_feedback': {
+      if (!deps.emailQueue) throw new Error('email queue not configured');
+      const { to, fromEmail, fromName, category, title, body, page, feedbackId } = event.payload;
+      const { htmlEscape } = await import('../auth/email-templates');
+      await deps.emailQueue.enqueue({
+        to,
+        subject: `[EnviroTrack] Nouveau message — ${htmlEscape(title)}`,
+        html: `<p><strong>De :</strong> ${htmlEscape(fromName)} &lt;${htmlEscape(fromEmail)}&gt;<br><strong>Catégorie :</strong> ${htmlEscape(category)}<br><strong>Page :</strong> ${page ? htmlEscape(page) : '—'}<br><strong>Réf. :</strong> ${htmlEscape(feedbackId)}</p><hr><p>${htmlEscape(body).replace(/\n/g, '<br>')}</p>`,
+      });
+      return;
+    }
     default: {
       // Exhaustive check — TS will yell if we add a new variant and forget it.
       const _exhaustive: never = event;

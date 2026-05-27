@@ -8,6 +8,7 @@ import { verifyCsrf } from '@/lib/server/auth';
 import { requireAuth } from '@/lib/server/middleware';
 import { makeRequestContext, withRequestContext } from '@/lib/server/observability/request-context';
 import { prisma } from '@/lib/server/prisma';
+import { enqueueOutbox } from '@/lib/server/outbox';
 
 const Body = z.object({
   category: z.enum(['BUG', 'FEATURE', 'UX', 'PERFORMANCE', 'OTHER']).default('OTHER'),
@@ -35,14 +36,39 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     }
 
     const { rating, page, ...rest } = parsed.data;
-    const feedback = await prisma.feedback.create({
-      data: {
-        userId: auth.user.sub,
-        ...rest,
-        ...(rating !== undefined ? { rating } : {}),
-        ...(page !== undefined ? { page } : {}),
-      },
-      select: { id: true, category: true, title: true, createdAt: true },
+
+    const user = await prisma.user.findUnique({
+      where: { id: auth.user.sub },
+      select: { email: true, name: true },
+    });
+
+    const feedback = await prisma.$transaction(async (tx) => {
+      const fb = await tx.feedback.create({
+        data: {
+          userId: auth.user.sub,
+          ...rest,
+          ...(rating !== undefined ? { rating } : {}),
+          ...(page !== undefined ? { page } : {}),
+        },
+        select: { id: true, category: true, title: true, createdAt: true },
+      });
+
+      const adminEmail = process.env['ADMIN_CONTACT_EMAIL'] ?? 'contact@envirotrack.uk';
+      await enqueueOutbox(tx, {
+        kind: 'email.contact_feedback',
+        payload: {
+          to: adminEmail,
+          fromEmail: user?.email ?? 'inconnu',
+          fromName: user?.name ?? user?.email ?? 'Utilisateur',
+          category: fb.category,
+          title: fb.title,
+          body: rest.body,
+          ...(page !== undefined ? { page } : {}),
+          feedbackId: fb.id,
+        },
+      });
+
+      return fb;
     });
 
     return NextResponse.json(feedback, {

@@ -26,7 +26,9 @@ export type OutboxEvent =
   | EmailSubscriptionCancellationScheduledEvent
   | EmailSubscriptionReactivatedEvent
   | EmailSubscriptionPaymentFailedEvent
-  | EmailSubscriptionSuspendedEvent;
+  | EmailSubscriptionSuspendedEvent
+  // Admin notifications
+  | EmailContactFeedbackEvent;
 
 export interface NotificationPaymentReceivedEvent {
   kind: 'notification.payment_received';
@@ -193,6 +195,21 @@ export interface EmailSubscriptionSuspendedEvent {
     currentBalance: number;
     attemptsLeft: number;
     retryAt: string | null;
+  };
+}
+
+export interface EmailContactFeedbackEvent {
+  kind: 'email.contact_feedback';
+  payload: {
+    /** Destination — ADMIN_CONTACT_EMAIL env var (e.g. contact@envirotrack.uk) */
+    to: string;
+    fromEmail: string;
+    fromName: string;
+    category: string;
+    title: string;
+    body: string;
+    page?: string;
+    feedbackId: string;
   };
 }
 
