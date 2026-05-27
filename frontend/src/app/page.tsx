@@ -2,8 +2,8 @@
 
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { useEffect } from 'react';
-import { Leaf, ArrowRight, CheckCircle2 } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { Leaf, ArrowRight, CheckCircle2, Send } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 
 const TRUST_BADGES = ['Conforme Décret 2017-040/PR', 'Normes ANGE Togo', 'Tmoney & Flooz acceptés'];
@@ -18,6 +18,11 @@ const FEATURES = [
 export default function LandingPage() {
   const { user, loading } = useAuth();
   const router = useRouter();
+
+  const [form, setForm] = useState({ name: '', email: '', subject: '', message: '' });
+  const [sending, setSending] = useState(false);
+  const [sent, setSent] = useState(false);
+  const [sendError, setSendError] = useState('');
 
   useEffect(() => {
     if (!loading && user) {
@@ -34,6 +39,29 @@ export default function LandingPage() {
         </div>
       </div>
     );
+  }
+
+  async function handleContact(e: React.FormEvent) {
+    e.preventDefault();
+    setSending(true);
+    setSendError('');
+    try {
+      const res = await fetch('/api/contact', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(form),
+      });
+      if (!res.ok) {
+        const data = (await res.json().catch(() => ({}))) as { message?: string };
+        throw new Error(data.message ?? "Erreur lors de l'envoi.");
+      }
+      setSent(true);
+      setForm({ name: '', email: '', subject: '', message: '' });
+    } catch (err) {
+      setSendError(err instanceof Error ? err.message : "Erreur lors de l'envoi.");
+    } finally {
+      setSending(false);
+    }
   }
 
   return (
@@ -54,7 +82,7 @@ export default function LandingPage() {
         </Link>
       </nav>
 
-      {/* Hero — full remaining height */}
+      {/* Hero */}
       <main className="flex-1 flex flex-col items-center justify-center px-5 sm:px-8 py-16 text-center">
         {/* Badge */}
         <div className="inline-flex items-center gap-1.5 bg-green-50 text-[#123C24] px-3 py-1 rounded-full text-xs font-semibold mb-8 border border-green-100">
@@ -115,6 +143,114 @@ export default function LandingPage() {
           ))}
         </div>
       </main>
+
+      {/* Contact section */}
+      <section className="px-5 sm:px-8 py-14 border-t border-gray-100 bg-gray-50">
+        <div className="max-w-xl mx-auto">
+          <h2 className="text-xl font-bold text-gray-900 mb-1 text-center">Nous contacter</h2>
+          <p className="text-sm text-gray-500 text-center mb-8">
+            Une question ? Écrivez-nous, nous répondons sous 24 h.
+          </p>
+
+          {sent ? (
+            <div className="flex flex-col items-center gap-3 py-10">
+              <div className="w-12 h-12 rounded-full bg-green-50 border border-green-100 flex items-center justify-center">
+                <CheckCircle2 size={22} className="text-green-600" />
+              </div>
+              <p className="text-sm font-medium text-gray-800">Message envoyé avec succès !</p>
+              <p className="text-xs text-gray-400">
+                Nous vous répondrons à {form.email || 'votre adresse'}.
+              </p>
+              <button
+                onClick={() => setSent(false)}
+                className="mt-2 text-xs text-[#123C24] underline underline-offset-2"
+              >
+                Envoyer un autre message
+              </button>
+            </div>
+          ) : (
+            <form onSubmit={handleContact} className="flex flex-col gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-xs font-medium text-gray-700">Nom complet *</label>
+                  <input
+                    type="text"
+                    required
+                    minLength={2}
+                    maxLength={100}
+                    value={form.name}
+                    onChange={(e) => setForm((p) => ({ ...p, name: e.target.value }))}
+                    placeholder="Jean Dupont"
+                    className="rounded-lg border border-gray-200 px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#123C24]/30 focus:border-[#123C24] bg-white"
+                  />
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-xs font-medium text-gray-700">Adresse email *</label>
+                  <input
+                    type="email"
+                    required
+                    maxLength={200}
+                    value={form.email}
+                    onChange={(e) => setForm((p) => ({ ...p, email: e.target.value }))}
+                    placeholder="jean@exemple.com"
+                    className="rounded-lg border border-gray-200 px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#123C24]/30 focus:border-[#123C24] bg-white"
+                  />
+                </div>
+              </div>
+
+              <div className="flex flex-col gap-1.5">
+                <label className="text-xs font-medium text-gray-700">Sujet</label>
+                <input
+                  type="text"
+                  maxLength={120}
+                  value={form.subject}
+                  onChange={(e) => setForm((p) => ({ ...p, subject: e.target.value }))}
+                  placeholder="Demande d'information sur EnviroTrack"
+                  className="rounded-lg border border-gray-200 px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#123C24]/30 focus:border-[#123C24] bg-white"
+                />
+              </div>
+
+              <div className="flex flex-col gap-1.5">
+                <label className="text-xs font-medium text-gray-700">Message *</label>
+                <textarea
+                  required
+                  minLength={10}
+                  maxLength={2000}
+                  rows={5}
+                  value={form.message}
+                  onChange={(e) => setForm((p) => ({ ...p, message: e.target.value }))}
+                  placeholder="Décrivez votre question ou demande…"
+                  className="rounded-lg border border-gray-200 px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#123C24]/30 focus:border-[#123C24] bg-white resize-none"
+                />
+              </div>
+
+              {sendError && (
+                <p className="text-xs text-red-600 bg-red-50 border border-red-100 rounded-lg px-3 py-2">
+                  {sendError}
+                </p>
+              )}
+
+              <button
+                type="submit"
+                disabled={sending}
+                className="inline-flex items-center justify-center gap-2 bg-[#123C24] text-white px-6 py-3 rounded-xl text-sm font-semibold hover:bg-[#0f2d1c] active:scale-95 transition-all disabled:opacity-60 disabled:cursor-not-allowed"
+              >
+                {sending ? (
+                  <>
+                    <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                    Envoi…
+                  </>
+                ) : (
+                  <>
+                    <Send size={15} />
+                    Envoyer le message
+                  </>
+                )}
+              </button>
+            </form>
+          )}
+        </div>
+      </section>
 
       {/* Footer */}
       <footer className="px-5 sm:px-8 py-5 border-t border-gray-100 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-gray-400">
