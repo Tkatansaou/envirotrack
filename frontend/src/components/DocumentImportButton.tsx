@@ -69,6 +69,13 @@ export default function DocumentImportButton({ onApply, className }: Props) {
   const [open, setOpen] = useState(false);
 
   async function handleFile(file: File) {
+    if (file.size > 4 * 1024 * 1024) {
+      toast(
+        'Document trop volumineux (max 4 Mo). Compressez le PDF ou réduisez sa taille.',
+        'error',
+      );
+      return;
+    }
     setStatus('uploading');
     const body = new FormData();
     body.append('file', file);
