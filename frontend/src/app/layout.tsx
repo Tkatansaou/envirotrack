@@ -27,7 +27,6 @@ export const metadata: Metadata = {
     'rapport environnemental',
   ],
   metadataBase: new URL('https://envirotrack.uk'),
-  alternates: { canonical: 'https://envirotrack.uk' },
   openGraph: {
     type: 'website',
     locale: 'fr_FR',

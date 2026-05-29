@@ -5,6 +5,7 @@ export const metadata = {
   title: "Conditions Générales d'Utilisation — EnviroTrack",
   description:
     "Droits et obligations de la plateforme EnviroTrack et de ses utilisateurs (bureaux d'études, experts indépendants, agents terrain).",
+  alternates: { canonical: '/legal/cgu' },
 };
 
 const LAST_UPDATED = '24 mai 2026';
