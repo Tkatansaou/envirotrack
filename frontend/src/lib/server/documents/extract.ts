@@ -100,17 +100,18 @@ Pour confidence : 0.9+ si le document est clairement une EIES complète, 0.5-0.9
   try {
     // All formats → text → Claude first (primary), DeepSeek fallback if Claude billing fails
     const text = await bufferToText(buffer, mimeType);
+    // 20k chars ≈ 8 pages de texte — reste sous la limite 10s de Vercel Hobby
     const truncated =
-      text.length > 120_000
-        ? text.slice(0, 120_000) + '\n\n[Document tronqué — limite de 120 000 caractères]'
+      text.length > 20_000
+        ? text.slice(0, 20_000) + '\n\n[Document tronqué — limite de 20 000 caractères]'
         : text;
     const userContent = `Fichier : ${filename}\n\n---\n${truncated}\n---\n\n${EXTRACTION_PROMPT}`;
 
-    // Claude (primary — reprend automatiquement dès que l'abonnement est actif)
+    // Claude Haiku (rapide — reste sous la limite 10s Vercel Hobby)
     try {
       const message = await client.messages.create({
-        model: 'claude-sonnet-4-6',
-        max_tokens: 4096,
+        model: 'claude-haiku-4-5-20251001',
+        max_tokens: 2048,
         system: SYSTEM,
         messages: [{ role: 'user', content: [{ type: 'text', text: userContent }] }],
       });

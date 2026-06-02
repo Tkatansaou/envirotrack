@@ -1,5 +1,5 @@
 export const runtime = 'nodejs';
-export const maxDuration = 60;
+export const maxDuration = 30;
 
 import 'server-only';
 import { NextResponse, type NextRequest } from 'next/server';
